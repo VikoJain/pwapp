@@ -527,7 +527,7 @@ function switchTab(name) {
   if (name==='tariff') initTariffPage();
   if (name==='health') initHealthPage();
   if (name==='settings') populateSettings();
-  if (name==='home' && state.teslaToken) { startAutoRefresh(); }
+  if (name==='home' && state.teslaToken && state.energySiteId) startAutoRefresh();
   if (name==='arb') renderArbUI();
 }
 function showSettings() { switchTab('settings'); }
@@ -1181,8 +1181,16 @@ function init() {
   const storedCode=sessionStorage.getItem('tesla_oauth_code');
   if (urlCode||storedCode) { handleOAuthCallback(); return; }
 
-  if (state.teslaToken) { setConnStatus('connected'); switchTab('home'); }
-  else if (state.octKey) { switchTab('tariff'); }
+  if (state.teslaToken) {
+    setConnStatus('connected');
+    switchTab('home');
+    // Ensure energy site is discovered before auto-refresh
+    if (!state.energySiteId) {
+      discoverEnergySite().then(() => startAutoRefresh());
+    } else {
+      startAutoRefresh();
+    }
+  } else if (state.octKey) { switchTab('tariff'); }
   else { switchTab('setup'); }
 
   // Start background auto-refresh every 30 seconds
