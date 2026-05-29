@@ -520,10 +520,14 @@ let state = {
 
 // ── UI helpers ────────────────────────────────────────────
 function switchTab(name) {
+  // Pages that exist
   ['setup','home','tariff','arb','health','settings'].forEach(t => {
     const page = document.getElementById('page-'+t);
-    const tab = document.getElementById('tab-'+t);
     if (page) page.classList.toggle('active', t===name);
+  });
+  // Nav tabs (health has no nav tab)
+  ['setup','home','tariff','arb','settings'].forEach(t => {
+    const tab = document.getElementById('tab-'+t);
     if (tab) tab.classList.toggle('active', t===name);
   });
   if (name==='tariff') initTariffPage();
