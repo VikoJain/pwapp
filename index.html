@@ -521,8 +521,10 @@ let state = {
 // ── UI helpers ────────────────────────────────────────────
 function switchTab(name) {
   ['setup','home','tariff','arb','health','settings'].forEach(t => {
-    document.getElementById('page-'+t).classList.toggle('active', t===name);
-    document.getElementById('tab-'+t).classList.toggle('active', t===name);
+    const page = document.getElementById('page-'+t);
+    const tab = document.getElementById('tab-'+t);
+    if (page) page.classList.toggle('active', t===name);
+    if (tab) tab.classList.toggle('active', t===name);
   });
   if (name==='tariff') initTariffPage();
   if (name==='health') initHealthPage();
