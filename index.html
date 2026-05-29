@@ -527,7 +527,7 @@ function switchTab(name) {
   if (name==='tariff') initTariffPage();
   if (name==='health') initHealthPage();
   if (name==='settings') populateSettings();
-  if (name==='home' && state.teslaToken) refreshData();
+  if (name==='home' && state.teslaToken) { startAutoRefresh(); }
   if (name==='arb') renderArbUI();
 }
 function showSettings() { switchTab('settings'); }
@@ -1195,13 +1195,18 @@ function init() {
 let autoRefreshTimer = null;
 function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-  autoRefreshTimer = setInterval(async () => {
-    if (!state.teslaToken || !state.energySiteId) return;
-    try {
-      const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
-      updateHomeUI(data.response);
-    } catch(e) {}
-  }, 30000);
+  // Fire immediately on start, then every 30 seconds
+  autoRefreshLive();
+  autoRefreshTimer = setInterval(autoRefreshLive, 30000);
+}
+
+async function autoRefreshLive() {
+  if (!state.teslaToken || !state.energySiteId) return;
+  try {
+    const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
+    updateHomeUI(data.response);
+    setConnStatus('connected');
+  } catch(e) {}
 }
 
 init();
