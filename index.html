@@ -662,6 +662,15 @@ function updateHomeUI(live, site) {
   modeEl.className = 'mode-badge ' + (modeClass[mode] || 'mode-self');
 }
 
+async function setExportMode(enable) {
+  if (!state.energySiteId) { toast('No Powerwall found.'); return; }
+  const rule = enable ? 'battery_ok' : 'never';
+  return teslaRequest(`/api/1/energy_sites/${state.energySiteId}/grid_import_export`, 'POST', {
+    disallow_charge_from_grid_with_solar_installed: false,
+    customer_preferred_export_rule: rule
+  });
+}
+
 async function setOperationMode(mode, reservePct) {
   if (!state.energySiteId) { toast('No Powerwall found.'); return; }
   return teslaRequest(`/api/1/energy_sites/${state.energySiteId}/operation`, 'POST', {
@@ -674,7 +683,7 @@ async function startTimedExport(mins, btn) {
   if (!state.teslaToken) { toast('Connect Tesla first.'); return; }
   disableExportBtns(true);
   try {
-    await setOperationMode('autonomous', 0);
+    await setExportMode(true);
     if (state.exportTimer) clearInterval(state.exportTimer);
     if (state.activeExportBtn) state.activeExportBtn.classList.remove('active');
     state.activeExportBtn = btn;
@@ -689,7 +698,7 @@ async function startTimedExport(mins, btn) {
       }
       updateTimerBar();
     }, 1000);
-    toast('Export started for ' + mins + ' minutes');
+    toast('Exporting for ' + mins + ' minutes');
   } catch(e) {
     toast('Error starting export: ' + e.message);
   } finally {
@@ -704,8 +713,8 @@ async function stopExport() {
   document.getElementById('pct-bar').textContent = 'Enter a target battery % below current level.';
   if (state.teslaToken) {
     try {
-      await setOperationMode('self_consumption', 20);
-      toast('Export stopped — returned to self-use mode');
+      await setExportMode(false);
+      toast('Export stopped — permission to export off');
       setTimeout(refreshData, 2000);
     } catch(e) {
       toast('Stopped locally. Tesla update may be delayed.');
@@ -732,7 +741,7 @@ async function startPctExport() {
   const pctNow = parseInt(document.getElementById('bat-pct').textContent) || 100;
   if (val >= pctNow) { document.getElementById('pct-bar').textContent = 'Target must be below current level (' + pctNow + '%).'; return; }
   try {
-    await setOperationMode('autonomous', val);
+    await setExportMode(true);
     document.getElementById('pct-bar').innerHTML = 'Exporting — will stop at <span class="hl">' + val + '%</span>. Battery at ' + pctNow + '% now.';
     toast('Export to ' + val + '% started');
     monitorPctExport(val);
