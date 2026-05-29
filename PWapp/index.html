@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Powerwall Manager</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f7;color:#1d1d1f;font-size:16px}
+.app{max-width:430px;margin:0 auto;background:#f5f5f7;min-height:100vh;display:flex;flex-direction:column}
+.topbar{background:#fff;padding:14px 16px 10px;border-bottom:1px solid #e5e5ea;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
+.topbar-title{font-size:17px;font-weight:600}
+.conn-badge{display:flex;align-items:center;gap:5px;font-size:12px;color:#3c3c43;background:#f2f2f7;padding:4px 10px;border-radius:20px;cursor:pointer}
+.conn-dot{width:7px;height:7px;border-radius:50%;background:#c7c7cc}
+.conn-dot.green{background:#34c759}
+.conn-dot.amber{background:#ff9500}
+.conn-dot.red{background:#ff3b30}
+.content{flex:1;padding:16px;padding-bottom:80px;overflow-y:auto}
+.page{display:none}.page.active{display:block}
+.card{background:#fff;border-radius:16px;padding:16px;margin-bottom:12px;border:1px solid #e5e5ea}
+.card-title{font-size:11px;font-weight:600;color:#8e8e93;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px}
+.setup-card{text-align:center;padding:24px 20px}
+.setup-icon{width:56px;height:56px;border-radius:16px;background:#e8f4ff;display:flex;align-items:center;justify-content:center;margin:0 auto 14px;font-size:28px}
+.setup-title{font-size:18px;font-weight:600;margin-bottom:8px}
+.setup-sub{font-size:13px;color:#8e8e93;line-height:1.55;margin-bottom:18px}
+.field-label{font-size:12px;font-weight:500;color:#8e8e93;margin-bottom:5px;text-align:left}
+.inp{width:100%;padding:11px 13px;border-radius:11px;border:1.5px solid #e5e5ea;background:#f9f9f9;font-size:14px;color:#1d1d1f;margin-bottom:10px;transition:border-color .15s}
+.inp:focus{outline:none;border-color:#007aff;background:#fff}
+.btn-primary{width:100%;padding:13px;border-radius:12px;background:#007aff;color:#fff;font-size:15px;font-weight:600;cursor:pointer;border:none;transition:background .15s}
+.btn-primary:hover{background:#0062cc}
+.btn-primary:disabled{background:#c7c7cc;cursor:not-allowed}
+.api-note{font-size:11px;color:#8e8e93;margin-top:10px;line-height:1.5}
+.api-note a{color:#007aff;text-decoration:none}
+.battery-row{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+.bat-icon{width:60px;height:30px;border:2.5px solid #1d1d1f;border-radius:5px;position:relative;flex-shrink:0}
+.bat-icon::after{content:'';position:absolute;right:-7px;top:50%;transform:translateY(-50%);width:5px;height:14px;background:#1d1d1f;border-radius:0 3px 3px 0}
+.bat-fill{position:absolute;left:2px;top:2px;bottom:2px;background:#34c759;border-radius:2px;transition:width .6s}
+.bat-fill.warn{background:#ff9500}
+.bat-fill.low{background:#ff3b30}
+.bat-pct{font-size:34px;font-weight:700;line-height:1}
+.bat-sub{font-size:12px;color:#8e8e93;margin-top:3px}
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stat{background:#f2f2f7;border-radius:11px;padding:10px 12px}
+.stat-val{font-size:17px;font-weight:600}
+.stat-lbl{font-size:11px;color:#8e8e93;margin-top:2px}
+.green{color:#34c759}.blue{color:#007aff}.amber{color:#ff9500}.red{color:#ff3b30}
+.btn-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.exp-btn{padding:13px 8px;border-radius:12px;border:1.5px solid #e5e5ea;background:#fff;font-size:14px;font-weight:600;cursor:pointer;text-align:center;transition:all .15s;color:#1d1d1f}
+.exp-btn:hover{background:#f2f2f7}
+.exp-btn.active{background:#e8f5e9;border-color:#34c759;color:#1a7f37}
+.exp-btn.danger{border-color:#ff3b30;color:#ff3b30}
+.exp-btn.danger:hover{background:#fff2f2}
+.exp-btn:disabled{opacity:.4;cursor:not-allowed}
+.status-bar{background:#f2f2f7;border-radius:10px;padding:10px 13px;margin-top:10px;font-size:13px;color:#3c3c43;min-height:42px;display:flex;align-items:center}
+.status-bar .hl{color:#1a7f37;font-weight:600}
+.status-bar .err{color:#ff3b30}
+.input-row{display:flex;gap:8px;margin-top:10px}
+.pct-inp{flex:1;padding:11px 13px;border-radius:11px;border:1.5px solid #e5e5ea;background:#fff;font-size:14px;color:#1d1d1f}
+.pct-inp:focus{outline:none;border-color:#007aff}
+.go-btn{padding:11px 18px;border-radius:11px;background:#007aff;color:#fff;font-size:14px;font-weight:600;cursor:pointer;border:none;white-space:nowrap}
+.go-btn:hover{background:#0062cc}
+.go-btn:disabled{background:#c7c7cc;cursor:not-allowed}
+.nav{display:flex;background:#fff;border-top:1px solid #e5e5ea;position:sticky;bottom:0;z-index:10}
+.nav-item{flex:1;padding:8px 4px 10px;text-align:center;font-size:10px;font-weight:500;color:#8e8e93;cursor:pointer;border:none;background:none;display:flex;flex-direction:column;align-items:center;gap:3px}
+.nav-item.active{color:#007aff}
+.nav-item svg{width:23px;height:23px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.chart-wrap{position:relative;width:100%;height:170px;margin-top:8px}
+.slot-info{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}
+.cur-rate-big{font-size:30px;font-weight:700;line-height:1}
+.cur-rate-big .unit{font-size:14px;font-weight:400;color:#8e8e93}
+.next-slot{text-align:right;font-size:12px;color:#8e8e93}
+.next-slot strong{display:block;font-size:15px;font-weight:600;color:#1d1d1f;margin-top:2px}
+.day-toggle{display:flex;background:#f2f2f7;border-radius:8px;padding:2px;margin-bottom:12px}
+.day-btn{flex:1;padding:5px 10px;border-radius:6px;border:none;background:transparent;font-size:12px;font-weight:500;cursor:pointer;color:#8e8e93;transition:all .15s}
+.day-btn.active{background:#fff;color:#1d1d1f;font-weight:600}
+.best-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f2f2f7}
+.best-row:last-child{border:none}
+.best-time{font-size:13px;font-weight:500}
+.best-rate{font-size:13px;font-weight:700}
+.badge{font-size:10px;padding:2px 9px;border-radius:20px;font-weight:600}
+.badge-best{background:#e8f5e9;color:#1a7f37}
+.badge-good{background:#e3f2fd;color:#0056b3}
+.badge-fair{background:#f2f2f7;color:#8e8e93}
+.earn-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.earn-card{background:#f2f2f7;border-radius:11px;padding:10px 12px}
+.earn-val{font-size:21px;font-weight:700;color:#34c759}
+.earn-lbl{font-size:11px;color:#8e8e93;margin-top:2px}
+.est-inp{flex:1;padding:9px 12px;border-radius:10px;border:1.5px solid #e5e5ea;background:#fff;font-size:13px;color:#1d1d1f}
+.est-inp:focus{outline:none;border-color:#007aff}
+.est-result{font-size:13px;color:#1a7f37;font-weight:600;margin-top:8px;min-height:18px}
+.health-bar-bg{height:10px;border-radius:5px;background:#f2f2f7;overflow:hidden;margin:8px 0 4px}
+.health-bar-fill{height:100%;border-radius:5px;background:#34c759;transition:width .6s}
+.health-labels{display:flex;justify-content:space-between;font-size:11px;color:#8e8e93}
+.notif-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid #f2f2f7}
+.notif-row:last-child{border:none}
+.notif-lbl{font-size:14px}
+.notif-sub{font-size:11px;color:#8e8e93;margin-top:2px}
+.toggle{width:44px;height:26px;border-radius:13px;background:#e5e5ea;position:relative;cursor:pointer;border:none;flex-shrink:0;transition:background .2s}
+.toggle.on{background:#34c759}
+.toggle::after{content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.toggle.on::after{transform:translateX(18px)}
+.settings-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid #f2f2f7}
+.settings-row:last-child{border:none}
+.settings-lbl{font-size:14px}
+.settings-sub{font-size:11px;color:#8e8e93;margin-top:2px}
+.settings-inp{width:130px;padding:7px 10px;border-radius:9px;border:1.5px solid #e5e5ea;background:#f9f9f9;font-size:13px;color:#1d1d1f;text-align:right}
+.settings-inp:focus{outline:none;border-color:#007aff;background:#fff}
+.btn-secondary{width:100%;padding:12px;border-radius:12px;background:#fff;color:#ff3b30;font-size:14px;font-weight:600;cursor:pointer;border:1.5px solid #ff3b30;margin-top:8px;transition:background .15s}
+.btn-secondary:hover{background:#fff2f2}
+.refresh-btn{background:none;border:none;cursor:pointer;color:#007aff;font-size:13px;font-weight:500;padding:2px 0;display:flex;align-items:center;gap:4px}
+.refresh-btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.loading{opacity:.5;pointer-events:none}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid #c7c7cc;border-top-color:#007aff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:5px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#1d1d1f;color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:500;z-index:100;opacity:0;transition:opacity .3s;pointer-events:none;max-width:320px;text-align:center}
+.toast.show{opacity:1}
+.section-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.section-hd .card-title{margin-bottom:0}
+.tmr-badge{font-size:10px;padding:2px 7px;border-radius:20px;background:#e3f2fd;color:#0056b3;font-weight:600;margin-left:5px}
+.mode-badge{font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600;display:inline-block}
+.mode-self{background:#e8f5e9;color:#1a7f37}
+.mode-backup{background:#e3f2fd;color:#0056b3}
+.mode-export{background:#fff3e0;color:#e65100}
+.mode-auto{background:#f3e5f5;color:#6a1b9a}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <span class="topbar-title">Powerwall</span>
+    <div class="conn-badge" onclick="showSettings()">
+      <span class="conn-dot" id="conn-dot"></span>
+      <span id="conn-label">Not connected</span>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- SETUP PAGE -->
+    <div class="page active" id="page-setup">
+      <div class="card setup-card" id="setup-tesla">
+        <div class="setup-icon">⚡</div>
+        <div class="setup-title">Connect Tesla</div>
+        <div class="setup-sub">Sign in with your Tesla account to access your Powerwall data and controls.</div>
+        <div class="field-label">Tesla Client ID</div>
+        <input class="inp" id="tesla-client-id" type="text" placeholder="Your Tesla app Client ID" autocomplete="off" />
+        <div class="field-label">Client Secret</div>
+        <input class="inp" id="tesla-client-secret" type="password" placeholder="Your Tesla app Client Secret" autocomplete="off" />
+        <div class="field-label">Redirect URI</div>
+        <input class="inp" id="tesla-redirect-uri" type="text" placeholder="https://your-app.netlify.app/callback" autocomplete="off" />
+        <button class="btn-primary" onclick="startTeslaAuth()">Connect with Tesla</button>
+        <div class="api-note">Your credentials are stored only on this device. Get your Client ID from <a href="https://developer.tesla.com" target="_blank">developer.tesla.com</a>.</div>
+      </div>
+      <div class="card setup-card" id="setup-octopus" style="margin-top:0">
+        <div class="setup-icon">🐙</div>
+        <div class="setup-title">Connect Octopus Energy</div>
+        <div class="setup-sub">Add your Octopus API key and tariff code to pull live Agile export rates.</div>
+        <div class="field-label">API Key</div>
+        <input class="inp" id="oct-key" type="password" placeholder="sk_live_..." autocomplete="off" />
+        <div class="field-label">Agile Outgoing tariff code</div>
+        <input class="inp" id="oct-tariff" type="text" placeholder="E-1R-AGILE-OUTGOING-19-05-13-C" autocomplete="off" />
+        <div class="field-label">Product code</div>
+        <input class="inp" id="oct-product" type="text" placeholder="AGILE-OUTGOING-19-05-13" autocomplete="off" />
+        <button class="btn-primary" onclick="saveOctopus()">Save Octopus settings</button>
+        <div class="api-note">Find your API key and tariff details in your <a href="https://octopus.energy/dashboard" target="_blank">Octopus account</a> under API access.</div>
+      </div>
+    </div>
+
+    <!-- HOME PAGE -->
+    <div class="page" id="page-home">
+      <div class="card">
+        <div class="section-hd">
+          <span class="card-title" style="margin-bottom:0">Battery</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="mode-badge" id="op-mode-badge">—</span>
+            <button class="refresh-btn" onclick="refreshData()" id="refresh-btn">
+              <svg viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+        <div class="battery-row">
+          <div class="bat-icon"><div class="bat-fill" id="bat-fill" style="width:0%"></div></div>
+          <div>
+            <div class="bat-pct" id="bat-pct">—%</div>
+            <div class="bat-sub" id="bat-sub">Loading...</div>
+          </div>
+        </div>
+        <div class="stat-grid">
+          <div class="stat"><div class="stat-val amber" id="s-solar">— kW</div><div class="stat-lbl">Solar</div></div>
+          <div class="stat"><div class="stat-val blue" id="s-grid">— kW</div><div class="stat-lbl">Grid</div></div>
+          <div class="stat"><div class="stat-val" id="s-home">— kW</div><div class="stat-lbl">Home use</div></div>
+          <div class="stat"><div class="stat-val green" id="s-export">— kW</div><div class="stat-lbl">Exporting</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Timed export</div>
+        <div class="btn-grid">
+          <button class="exp-btn" id="btn5" onclick="startTimedExport(5,this)">Export 5 min</button>
+          <button class="exp-btn" id="btn10" onclick="startTimedExport(10,this)">Export 10 min</button>
+          <button class="exp-btn" id="btn15" onclick="startTimedExport(15,this)">Export 15 min</button>
+          <button class="exp-btn danger" onclick="stopExport()">Stop export</button>
+        </div>
+        <div class="status-bar" id="timer-bar">No timed export active.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Export to target %</div>
+        <div class="input-row">
+          <input class="pct-inp" type="number" id="pct-target" min="5" max="95" placeholder="Target % e.g. 50" />
+          <button class="go-btn" onclick="startPctExport()">Export</button>
+        </div>
+        <div class="status-bar" id="pct-bar">Enter a target battery % below current level.</div>
+      </div>
+    </div>
+
+    <!-- TARIFF PAGE -->
+    <div class="page" id="page-tariff">
+      <div class="card" id="tariff-no-key" style="display:none">
+        <div style="text-align:center;padding:10px 0">
+          <div style="font-size:32px;margin-bottom:10px">🐙</div>
+          <div style="font-size:15px;font-weight:600;margin-bottom:6px">Octopus not connected</div>
+          <div style="font-size:13px;color:#8e8e93;margin-bottom:14px">Add your Octopus API key in setup to see live Agile rates.</div>
+          <button class="btn-primary" style="width:auto;padding:10px 24px" onclick="switchTab('setup')">Go to setup</button>
+        </div>
+      </div>
+
+      <div id="tariff-content">
+        <div class="card">
+          <div class="section-hd">
+            <div>
+              <div style="font-size:11px;font-weight:600;color:#8e8e93;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Current export rate</div>
+              <div class="cur-rate-big" id="cur-rate">—<span class="unit"> p/kWh</span></div>
+            </div>
+            <div class="next-slot">
+              <span id="next-slot-time">Next slot</span>
+              <strong id="next-rate">—p</strong>
+            </div>
+          </div>
+          <div class="day-toggle">
+            <button class="day-btn active" id="day-today" onclick="switchDay('today')">Today</button>
+            <button class="day-btn" id="day-tomorrow" onclick="switchDay('tomorrow')">Tomorrow <span class="tmr-badge" id="tmr-badge">4pm</span></button>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="rateChart" role="img" aria-label="Agile Octopus export rates across 30-minute slots">Rate data loading...</canvas>
+          </div>
+          <div style="display:flex;gap:12px;margin-top:8px;font-size:11px;color:#8e8e93">
+            <span><span style="display:inline-block;width:10px;height:10px;background:#34c759;border-radius:2px;margin-right:3px"></span>Best (&gt;25p)</span>
+            <span><span style="display:inline-block;width:10px;height:10px;background:#007aff;border-radius:2px;margin-right:3px"></span>Good (18–25p)</span>
+            <span><span style="display:inline-block;width:10px;height:10px;background:#ff9500;border-radius:2px;margin-right:3px"></span>Fair (&lt;18p)</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-hd">
+            <span class="card-title" style="margin-bottom:0">Best export windows</span>
+            <button class="refresh-btn" onclick="loadRates()">
+              <svg viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              Refresh
+            </button>
+          </div>
+          <div id="best-slots"></div>
+        </div>
+
+        <div class="card">
+          <div class="earn-grid">
+            <div class="earn-card"><div class="earn-val" id="earn-today">£—</div><div class="earn-lbl">Today's earnings</div></div>
+            <div class="earn-card"><div class="earn-val" id="earn-week">£—</div><div class="earn-lbl">This week</div></div>
+          </div>
+          <div class="card-title" style="margin-bottom:8px">Earnings estimator</div>
+          <div class="input-row" style="margin-top:0">
+            <input class="est-inp" type="number" id="est-kwh" placeholder="kWh to export" step="0.1" oninput="calcEarnings()" />
+            <span style="font-size:13px;color:#8e8e93;align-self:center;white-space:nowrap">at current rate</span>
+          </div>
+          <div class="est-result" id="est-result"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- HEALTH PAGE -->
+    <div class="page" id="page-health">
+      <div class="card">
+        <div class="section-hd">
+          <span class="card-title" style="margin-bottom:0">Battery health</span>
+          <button class="refresh-btn" onclick="refreshHealth()">
+            <svg viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Refresh
+          </button>
+        </div>
+        <div class="stat-grid">
+          <div class="stat"><div class="stat-val green" id="h-capacity">—%</div><div class="stat-lbl">Capacity retained</div></div>
+          <div class="stat"><div class="stat-val" id="h-kwh">— kWh</div><div class="stat-lbl">Usable capacity</div></div>
+          <div class="stat"><div class="stat-val" id="h-cycles">—</div><div class="stat-lbl">Cycle count</div></div>
+          <div class="stat"><div class="stat-val" id="h-life">—</div><div class="stat-lbl">Est. remaining life</div></div>
+        </div>
+        <div style="margin-top:14px">
+          <div style="font-size:12px;color:#8e8e93;margin-bottom:4px">Capacity vs original 13.5 kWh</div>
+          <div class="health-bar-bg"><div class="health-bar-fill" id="h-bar" style="width:0%"></div></div>
+          <div class="health-labels"><span>0</span><span id="h-bar-label">— kWh now</span><span>13.5 kWh</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Conditions</div>
+        <div class="stat-grid">
+          <div class="stat"><div class="stat-val" id="h-temp">—°C</div><div class="stat-lbl">Avg temperature</div></div>
+          <div class="stat"><div class="stat-val" id="h-temp-status">—</div><div class="stat-lbl">Temp status</div></div>
+          <div class="stat"><div class="stat-val" id="h-age">—</div><div class="stat-lbl">System age</div></div>
+          <div class="stat"><div class="stat-val" id="h-status">—</div><div class="stat-lbl">Overall status</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Capacity over time</div>
+        <div class="chart-wrap" style="height:160px">
+          <canvas id="healthChart" role="img" aria-label="Battery capacity degradation over time">Health chart loading...</canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS PAGE -->
+    <div class="page" id="page-settings">
+      <div class="card">
+        <div class="card-title">Tesla connection</div>
+        <div class="settings-row">
+          <div><div class="settings-lbl">Status</div><div class="settings-sub" id="tesla-status-txt">Not connected</div></div>
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-lbl">Client ID</div></div>
+          <input class="settings-inp" id="s-client-id" type="text" placeholder="Client ID" />
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-lbl">Redirect URI</div></div>
+          <input class="settings-inp" id="s-redirect-uri" type="text" placeholder="https://..." />
+        </div>
+        <button class="btn-primary" style="margin-top:10px" onclick="reconnectTesla()">Reconnect Tesla</button>
+        <button class="btn-secondary" onclick="disconnectTesla()">Disconnect Tesla</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Octopus Energy</div>
+        <div class="settings-row">
+          <div><div class="settings-lbl">API Key</div></div>
+          <input class="settings-inp" id="s-oct-key" type="password" placeholder="sk_live_..." />
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-lbl">Tariff code</div></div>
+          <input class="settings-inp" id="s-oct-tariff" type="text" placeholder="E-1R-AGILE-..." />
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-lbl">Product code</div></div>
+          <input class="settings-inp" id="s-oct-product" type="text" placeholder="AGILE-OUTGOING-..." />
+        </div>
+        <button class="btn-primary" style="margin-top:10px" onclick="saveOctopusSettings()">Save Octopus settings</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Notifications</div>
+        <div class="notif-row"><div><div class="notif-lbl">Export session complete</div><div class="notif-sub">When a timed export finishes</div></div><button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+        <div class="notif-row"><div><div class="notif-lbl">Battery below 20%</div><div class="notif-sub">Low charge warning</div></div><button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+        <div class="notif-row"><div><div class="notif-lbl">Battery fully charged</div></div><button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+        <div class="notif-row"><div><div class="notif-lbl">High export rate alert</div><div class="notif-sub" id="thresh-sub">When rate exceeds 25p/kWh</div></div><button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
+        <div class="notif-row"><div><div class="notif-lbl">Tomorrow's rates published</div><div class="notif-sub">Octopus publish ~4pm daily</div></div><button class="toggle" onclick="this.classList.toggle('on')"></button></div>
+        <div class="notif-row"><div><div class="notif-lbl">Daily earnings summary</div></div><button class="toggle" onclick="this.classList.toggle('on')"></button></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Alert threshold</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
+          <input type="range" min="10" max="50" value="25" step="1" id="rate-thresh" style="flex:1" oninput="document.getElementById('thresh-val').textContent=this.value+'p/kWh';document.getElementById('thresh-sub').textContent='When rate exceeds '+this.value+'p/kWh'" />
+          <span style="font-size:14px;font-weight:600;min-width:62px;text-align:right" id="thresh-val">25p/kWh</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">About</div>
+        <div class="settings-row"><div class="settings-lbl">Version</div><div style="font-size:13px;color:#8e8e93">1.0.0</div></div>
+        <div class="settings-row"><div class="settings-lbl">Tesla API</div><div style="font-size:13px;color:#8e8e93">Fleet API v1</div></div>
+        <div class="settings-row" style="border:none"><div class="settings-lbl">Octopus API</div><div style="font-size:13px;color:#8e8e93">REST v1</div></div>
+      </div>
+    </div>
+
+  </div>
+
+  <nav class="nav">
+    <button class="nav-item" id="tab-setup" onclick="switchTab('setup')">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Setup
+    </button>
+    <button class="nav-item" id="tab-home" onclick="switchTab('home')">
+      <svg viewBox="0 0 24 24"><path d="M3 12l9-9 9 9"/><path d="M9 21V12h6v9"/><path d="M3 12v9h18v-9"/></svg>
+      Home
+    </button>
+    <button class="nav-item" id="tab-tariff" onclick="switchTab('tariff')">
+      <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Tariff
+    </button>
+    <button class="nav-item" id="tab-health" onclick="switchTab('health')">
+      <svg viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+      Health
+    </button>
+    <button class="nav-item active" id="tab-settings" onclick="switchTab('settings')">
+      <svg viewBox="0 0 24 24"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      Settings
+    </button>
+  </nav>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const TESLA_AUTH_URL = 'https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3';
+const TESLA_API_EU = 'https://fleet-api.prd.eu.vn.cloud.tesla.com';
+const TESLA_API_NA = 'https://fleet-api.prd.na.vn.cloud.tesla.com';
+let TESLA_API = TESLA_API_EU; // default to EU for UK users
+const OCTOPUS_API = 'https://api.octopus.energy/v1';
+
+let state = {
+  teslaToken: localStorage.getItem('tesla_token') || null,
+  teslaRefresh: localStorage.getItem('tesla_refresh') || null,
+  teslaExpiry: localStorage.getItem('tesla_expiry') || null,
+  clientId: localStorage.getItem('tesla_client_id') || '',
+  clientSecret: localStorage.getItem('tesla_client_secret') || '',
+  redirectUri: localStorage.getItem('tesla_redirect_uri') || '',
+  octKey: localStorage.getItem('oct_key') || '',
+  octTariff: localStorage.getItem('oct_tariff') || '',
+  octProduct: localStorage.getItem('oct_product') || '',
+  energySiteId: localStorage.getItem('energy_site_id') || null,
+  powerwallData: null,
+  todayRates: [],
+  tomorrowRates: [],
+  currentDay: 'today',
+  exportTimer: null,
+  exportCountdown: 0,
+  activeExportBtn: null,
+  rateChart: null,
+  healthChart: null,
+};
+
+function switchTab(name) {
+  ['setup','home','tariff','health','settings'].forEach(t => {
+    document.getElementById('page-'+t).classList.toggle('active', t===name);
+    document.getElementById('tab-'+t).classList.toggle('active', t===name);
+  });
+  if (name === 'tariff') initTariffPage();
+  if (name === 'health') initHealthPage();
+  if (name === 'settings') populateSettings();
+  if (name === 'home' && state.teslaToken) refreshData();
+}
+
+function showSettings() { switchTab('settings'); }
+
+function toast(msg, dur=2800) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), dur);
+}
+
+function setConnStatus(status) {
+  const dot = document.getElementById('conn-dot');
+  const lbl = document.getElementById('conn-label');
+  dot.className = 'conn-dot';
+  if (status === 'connected') { dot.classList.add('green'); lbl.textContent = 'Connected'; }
+  else if (status === 'loading') { dot.classList.add('amber'); lbl.textContent = 'Connecting...'; }
+  else { lbl.textContent = 'Not connected'; }
+}
+
+async function startTeslaAuth() {
+  const clientId = document.getElementById('tesla-client-id').value.trim();
+  const clientSecret = document.getElementById('tesla-client-secret').value.trim();
+  const redirectUri = document.getElementById('tesla-redirect-uri').value.trim();
+  if (!clientId || !clientSecret || !redirectUri) { toast('Please enter your Client ID, Client Secret and Redirect URI.'); return; }
+  localStorage.setItem('tesla_client_id', clientId);
+  localStorage.setItem('tesla_client_secret', clientSecret);
+  localStorage.setItem('tesla_redirect_uri', redirectUri);
+  state.clientId = clientId;
+  state.clientSecret = clientSecret;
+  state.redirectUri = redirectUri;
+  const authState = Math.random().toString(36).substring(2);
+  localStorage.setItem('tesla_auth_state', authState);
+  const scope = 'openid offline_access user_data energy_device_data energy_cmds';
+  const url = `https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/authorize?` +
+    `client_id=${encodeURIComponent(clientId)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&response_type=code` +
+    `&scope=${encodeURIComponent(scope)}` +
+    `&state=${encodeURIComponent(authState)}` +
+    `&audience=https://fleet-api.prd.eu.vn.cloud.tesla.com`;
+  toast('Opening Tesla login...');
+  window.location.href = url;
+}
+
+async function handleOAuthCallback() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const code = urlParams.get('code') || sessionStorage.getItem('tesla_oauth_code');
+  const returnedState = urlParams.get('state') || sessionStorage.getItem('tesla_oauth_state');
+  // Clear stored values
+  sessionStorage.removeItem('tesla_oauth_code');
+  sessionStorage.removeItem('tesla_oauth_state');
+  const savedState = localStorage.getItem('tesla_auth_state');
+  if (!code || returnedState !== savedState) return;
+  history.replaceState({}, '', window.location.pathname);
+  const clientId = localStorage.getItem('tesla_client_id');
+  const clientSecret = localStorage.getItem('tesla_client_secret');
+  const redirectUri = localStorage.getItem('tesla_redirect_uri');
+  setConnStatus('loading');
+  toast('Completing Tesla login...');
+  try {
+    const resp = await fetch(`${TESLA_AUTH_URL}/token`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: clientId,
+        client_secret: clientSecret,
+        code,
+        redirect_uri: redirectUri,
+        audience: TESLA_API
+      })
+    });
+    const data = await resp.json();
+    if (data.access_token) {
+      localStorage.setItem('tesla_token', data.access_token);
+      localStorage.setItem('tesla_refresh', data.refresh_token);
+      localStorage.setItem('tesla_expiry', Date.now() + data.expires_in * 1000);
+      state.teslaToken = data.access_token;
+      state.teslaRefresh = data.refresh_token;
+      setConnStatus('connected');
+      toast('Tesla connected!');
+      await discoverEnergySite();
+      switchTab('home');
+    } else {
+      throw new Error(data.error || 'Auth failed');
+    }
+  } catch(e) {
+    setConnStatus('');
+    toast('Tesla login failed: ' + e.message);
+  }
+}
+
+async function refreshTeslaToken() {
+  if (!state.teslaRefresh || !state.clientId) return false;
+  try {
+    const resp = await fetch(`${TESLA_AUTH_URL}/token`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: state.clientId,
+        refresh_token: state.teslaRefresh
+      })
+    });
+    const data = await resp.json();
+    if (data.access_token) {
+      localStorage.setItem('tesla_token', data.access_token);
+      localStorage.setItem('tesla_refresh', data.refresh_token);
+      localStorage.setItem('tesla_expiry', Date.now() + data.expires_in * 1000);
+      state.teslaToken = data.access_token;
+      state.teslaRefresh = data.refresh_token;
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
+
+async function teslaRequest(path, method='GET', body=null) {
+  if (!state.teslaToken) throw new Error('Not authenticated');
+  if (state.teslaExpiry && Date.now() > state.teslaExpiry - 60000) {
+    await refreshTeslaToken();
+  }
+  const resp = await fetch('/.netlify/functions/tesla-proxy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      path: TESLA_API + path,
+      method,
+      body,
+      token: state.teslaToken
+    })
+  });
+  const data = await resp.json();
+  if (data.error === 'authentication token required') {
+    const refreshed = await refreshTeslaToken();
+    if (refreshed) return teslaRequest(path, method, body);
+    throw new Error('Session expired. Please reconnect.');
+  }
+  return data;
+}
+
+async function discoverEnergySite() {
+  for (const api of [TESLA_API_EU, TESLA_API_NA]) {
+    try {
+      TESLA_API = api;
+      const data = await teslaRequest('/api/1/products');
+      console.log('Products response from', api, ':', JSON.stringify(data));
+      toast('API response: ' + JSON.stringify(data).substring(0, 100), 5000);
+      const site = data.response && data.response.find(p => p.energy_site_id);
+      if (site) {
+        state.energySiteId = site.energy_site_id;
+        localStorage.setItem('energy_site_id', site.energy_site_id);
+        localStorage.setItem('tesla_api', api);
+        toast('Connected via ' + (api.includes('eu') ? 'EU' : 'NA') + ' server');
+        return;
+      }
+    } catch(e) {
+      console.log('Error with', api, ':', e.message);
+      toast('Error with ' + api + ': ' + e.message, 4000);
+      continue;
+    }
+  }
+  toast('Full response logged to console — press Cmd+Option+I to view', 5000);
+}
+
+async function refreshData() {
+  if (!state.teslaToken) { toast('Please connect Tesla first.'); return; }
+  if (!state.energySiteId) await discoverEnergySite();
+  if (!state.energySiteId) { toast('No Powerwall found on this account.'); return; }
+  const btn = document.getElementById('refresh-btn');
+  btn.innerHTML = '<span class="spinner"></span> Loading';
+  try {
+    const [liveData, siteData] = await Promise.all([
+      teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`),
+      teslaRequest(`/api/1/energy_sites/${state.energySiteId}/site_info`)
+    ]);
+    updateHomeUI(liveData.response, siteData.response);
+    setConnStatus('connected');
+  } catch(e) {
+    toast('Error: ' + e.message);
+    setConnStatus('');
+  } finally {
+    btn.innerHTML = '<svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Refresh';
+  }
+}
+
+function updateHomeUI(live, site) {
+  if (!live) return;
+  const pct = Math.round(live.percentage_charged || 0);
+  const kwh = ((pct / 100) * 13.5).toFixed(1);
+  const solarW = live.solar_power || 0;
+  const gridW = live.grid_power || 0;
+  const loadW = live.load_power || 0;
+  const battW = live.battery_power || 0;
+  const exportW = gridW < 0 ? Math.abs(gridW) : 0;
+
+  document.getElementById('bat-pct').textContent = pct + '%';
+  document.getElementById('bat-sub').textContent = `~${kwh} kWh · ${battW < 0 ? 'charging' : battW > 0 ? 'discharging' : 'idle'}`;
+  const fill = document.getElementById('bat-fill');
+  fill.style.width = pct + '%';
+  fill.className = 'bat-fill' + (pct <= 20 ? ' low' : pct <= 40 ? ' warn' : '');
+
+  document.getElementById('s-solar').textContent = (solarW / 1000).toFixed(1) + ' kW';
+  document.getElementById('s-grid').textContent = Math.abs(gridW / 1000).toFixed(1) + ' kW';
+  document.getElementById('s-home').textContent = (loadW / 1000).toFixed(1) + ' kW';
+  document.getElementById('s-export').textContent = (exportW / 1000).toFixed(1) + ' kW';
+
+  const mode = live.operation || 'self_consumption';
+  const modeEl = document.getElementById('op-mode-badge');
+  const modes = {self_consumption:'Self use',backup:'Backup',autonomous:'Auto',export:'Exporting'};
+  const modeClass = {self_consumption:'mode-self',backup:'mode-backup',autonomous:'mode-auto',export:'mode-export'};
+  modeEl.textContent = modes[mode] || mode;
+  modeEl.className = 'mode-badge ' + (modeClass[mode] || 'mode-self');
+}
+
+async function setOperationMode(mode, reservePct) {
+  if (!state.energySiteId) { toast('No Powerwall found.'); return; }
+  return teslaRequest(`/api/1/energy_sites/${state.energySiteId}/operation`, 'POST', {
+    default_real_mode: mode,
+    backup_reserve_percent: reservePct !== undefined ? reservePct : 20
+  });
+}
+
+async function startTimedExport(mins, btn) {
+  if (!state.teslaToken) { toast('Connect Tesla first.'); return; }
+  disableExportBtns(true);
+  try {
+    await setOperationMode('autonomous', 0);
+    if (state.exportTimer) clearInterval(state.exportTimer);
+    if (state.activeExportBtn) state.activeExportBtn.classList.remove('active');
+    state.activeExportBtn = btn;
+    btn.classList.add('active');
+    state.exportCountdown = mins * 60;
+    updateTimerBar();
+    state.exportTimer = setInterval(async () => {
+      state.exportCountdown--;
+      if (state.exportCountdown <= 0) {
+        await stopExport();
+        return;
+      }
+      updateTimerBar();
+    }, 1000);
+    toast('Export started for ' + mins + ' minutes');
+  } catch(e) {
+    toast('Error starting export: ' + e.message);
+  } finally {
+    disableExportBtns(false);
+  }
+}
+
+async function stopExport() {
+  if (state.exportTimer) { clearInterval(state.exportTimer); state.exportTimer = null; }
+  if (state.activeExportBtn) { state.activeExportBtn.classList.remove('active'); state.activeExportBtn = null; }
+  document.getElementById('timer-bar').textContent = 'Export stopped.';
+  document.getElementById('pct-bar').textContent = 'Enter a target battery % below current level.';
+  if (state.teslaToken) {
+    try {
+      await setOperationMode('self_consumption', 20);
+      toast('Export stopped — returned to self-use mode');
+      setTimeout(refreshData, 2000);
+    } catch(e) {
+      toast('Stopped locally. Tesla update may be delayed.');
+    }
+  }
+}
+
+function updateTimerBar() {
+  const m = Math.floor(state.exportCountdown / 60);
+  const s = state.exportCountdown % 60;
+  document.getElementById('timer-bar').innerHTML = 'Exporting — stops in <span class="hl">' + m + ':' + String(s).padStart(2,'0') + '</span>';
+}
+
+function disableExportBtns(disabled) {
+  ['btn5','btn10','btn15'].forEach(id => {
+    document.getElementById(id).disabled = disabled;
+  });
+}
+
+async function startPctExport() {
+  const val = parseInt(document.getElementById('pct-target').value);
+  if (!val || val < 5 || val > 95) { document.getElementById('pct-bar').textContent = 'Enter a valid target between 5 and 95%.'; return; }
+  if (!state.teslaToken) { toast('Connect Tesla first.'); return; }
+  const pctNow = parseInt(document.getElementById('bat-pct').textContent) || 100;
+  if (val >= pctNow) { document.getElementById('pct-bar').textContent = 'Target must be below current level (' + pctNow + '%).'; return; }
+  try {
+    await setOperationMode('autonomous', val);
+    document.getElementById('pct-bar').innerHTML = 'Exporting — will stop at <span class="hl">' + val + '%</span>. Battery at ' + pctNow + '% now.';
+    toast('Export to ' + val + '% started');
+    monitorPctExport(val);
+  } catch(e) {
+    toast('Error: ' + e.message);
+  }
+}
+
+function monitorPctExport(target) {
+  const check = setInterval(async () => {
+    try {
+      const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
+      const pct = Math.round(data.response.percentage_charged || 0);
+      document.getElementById('pct-bar').innerHTML = 'Exporting — battery at <span class="hl">' + pct + '%</span>, stopping at ' + target + '%.';
+      if (pct <= target) {
+        clearInterval(check);
+        await stopExport();
+        toast('Target reached — export stopped at ' + pct + '%');
+      }
+    } catch(e) { clearInterval(check); }
+  }, 30000);
+}
+
+function saveOctopus() {
+  const key = document.getElementById('oct-key').value.trim();
+  const tariff = document.getElementById('oct-tariff').value.trim();
+  const product = document.getElementById('oct-product').value.trim();
+  if (!key || !tariff || !product) { toast('Please fill in all Octopus fields.'); return; }
+  localStorage.setItem('oct_key', key);
+  localStorage.setItem('oct_tariff', tariff);
+  localStorage.setItem('oct_product', product);
+  state.octKey = key; state.octTariff = tariff; state.octProduct = product;
+  toast('Octopus settings saved!');
+}
+
+async function loadRates() {
+  if (!state.octKey || !state.octTariff || !state.octProduct) {
+    document.getElementById('tariff-no-key').style.display = 'block';
+    document.getElementById('tariff-content').style.display = 'none';
+    return;
+  }
+  document.getElementById('tariff-no-key').style.display = 'none';
+  document.getElementById('tariff-content').style.display = 'block';
+
+  const now = new Date();
+  const todayStart = new Date(now); todayStart.setHours(0,0,0,0);
+  const todayEnd = new Date(now); todayEnd.setHours(23,59,59,0);
+  const tmrStart = new Date(todayStart); tmrStart.setDate(tmrStart.getDate()+1);
+  const tmrEnd = new Date(todayEnd); tmrEnd.setDate(tmrEnd.getDate()+1);
+
+  const fmt = d => d.toISOString().replace(/\.\d{3}Z$/,'Z');
+
+  try {
+    const [todayResp, tmrResp] = await Promise.all([
+      fetch(`${OCTOPUS_API}/products/${state.octProduct}/electricity-tariffs/${state.octTariff}/standard-unit-rates/?period_from=${fmt(todayStart)}&period_to=${fmt(todayEnd)}&page_size=50`, {
+        headers: {'Authorization': 'Basic ' + btoa(state.octKey + ':')}
+      }),
+      fetch(`${OCTOPUS_API}/products/${state.octProduct}/electricity-tariffs/${state.octTariff}/standard-unit-rates/?period_from=${fmt(tmrStart)}&period_to=${fmt(tmrEnd)}&page_size=50`, {
+        headers: {'Authorization': 'Basic ' + btoa(state.octKey + ':')}
+      })
+    ]);
+
+    const [todayData, tmrData] = await Promise.all([todayResp.json(), tmrResp.json()]);
+
+    state.todayRates = parseRates(todayData.results || []);
+    state.tomorrowRates = parseRates(tmrData.results || []);
+
+    renderRateChart(state.currentDay === 'today' ? state.todayRates : state.tomorrowRates);
+    renderBestSlots(state.currentDay === 'today' ? state.todayRates : state.tomorrowRates);
+    updateCurrentRate();
+
+    const tmrAvail = state.tomorrowRates.length > 0;
+    document.getElementById('tmr-badge').textContent = tmrAvail ? 'Live' : '~4pm';
+    document.getElementById('tmr-badge').style.background = tmrAvail ? '#e8f5e9' : '#e3f2fd';
+    document.getElementById('tmr-badge').style.color = tmrAvail ? '#1a7f37' : '#0056b3';
+
+  } catch(e) {
+    toast('Octopus API error: ' + e.message);
+  }
+}
+
+function parseRates(results) {
+  const slots = new Array(48).fill(null);
+  results.forEach(r => {
+    const d = new Date(r.valid_from);
+    const idx = d.getUTCHours() * 2 + (d.getUTCMinutes() >= 30 ? 1 : 0);
+    if (idx >= 0 && idx < 48) slots[idx] = parseFloat(r.value_inc_vat.toFixed(2));
+  });
+  return slots;
+}
+
+function updateCurrentRate() {
+  const now = new Date();
+  const idx = now.getHours() * 2 + (now.getMinutes() >= 30 ? 1 : 0);
+  const rates = state.todayRates;
+  const cur = rates[idx];
+  const next = rates[idx+1] || (state.tomorrowRates[0]);
+  if (cur !== null && cur !== undefined) {
+    document.getElementById('cur-rate').innerHTML = cur.toFixed(1) + '<span class="unit"> p/kWh</span>';
+  }
+  if (next !== null && next !== undefined) {
+    const nextH = Math.floor((idx+1)/2), nextM = (idx+1)%2===0?'00':'30';
+    document.getElementById('next-slot-time').textContent = 'Next (' + String(nextH).padStart(2,'0') + ':' + nextM + ')';
+    document.getElementById('next-rate').textContent = next.toFixed(1) + 'p';
+  }
+}
+
+function getLabels() {
+  return Array.from({length:48}, (_,i) => {
+    const h = Math.floor(i/2), m = i%2===0?'00':'30';
+    return h%4===0 ? String(h).padStart(2,'0')+':'+m : '';
+  });
+}
+
+function getBarColors(rates) {
+  return rates.map(r => r === null ? '#e5e5ea' : r >= 25 ? '#34c759' : r >= 18 ? '#007aff' : '#ff9500');
+}
+
+function renderRateChart(rates) {
+  if (state.rateChart) state.rateChart.destroy();
+  const ctx = document.getElementById('rateChart').getContext('2d');
+  const displayRates = rates.map(r => r === null ? 0 : r);
+  state.rateChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: getLabels(),
+      datasets: [{
+        data: displayRates,
+        backgroundColor: getBarColors(rates),
+        borderWidth: 0,
+        barPercentage: 0.95,
+        categoryPercentage: 1.0
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {display:false},
+        tooltip: {
+          callbacks: {
+            title: items => {
+              const i = items[0].dataIndex;
+              const h = Math.floor(i/2), m = i%2===0?'00':'30';
+              const h2 = i%2===0?h:h+1, m2 = i%2===0?'30':'00';
+              return String(h).padStart(2,'0')+':'+m+' – '+String(h2).padStart(2,'0')+':'+m2;
+            },
+            label: item => rates[item.dataIndex] !== null ? ' ' + rates[item.dataIndex].toFixed(1) + 'p/kWh' : ' No data'
+          }
+        }
+      },
+      scales: {
+        x: {ticks:{font:{size:10},color:'#8e8e93',maxRotation:0,autoSkip:false},grid:{display:false},border:{display:false}},
+        y: {ticks:{font:{size:10},color:'#8e8e93',callback:v=>v+'p'},grid:{color:'#f2f2f7'},border:{display:false}}
+      }
+    }
+  });
+}
+
+function renderBestSlots(rates) {
+  const valid = rates.map((r,i) => r !== null ? {r,i} : null).filter(Boolean);
+  const sorted = [...valid].sort((a,b) => b.r-a.r).slice(0,5);
+  const top1 = sorted[0]?.i;
+  const top3 = new Set(sorted.slice(0,3).map(x=>x.i));
+  const top5 = sorted.map(x=>x.i).sort((a,b)=>a-b);
+  document.getElementById('best-slots').innerHTML = top5.map(i => {
+    const h = Math.floor(i/2), m = i%2===0?'00':'30';
+    const h2 = i%2===0?h:h+1, m2 = i%2===0?'30':'00';
+    const time = String(h).padStart(2,'0')+':'+m+' – '+String(h2).padStart(2,'0')+':'+m2;
+    const badge = i===top1 ? '<span class="badge badge-best">Best</span>' :
+                  top3.has(i) ? '<span class="badge badge-good">Good</span>' :
+                  '<span class="badge badge-fair">Fair</span>';
+    return `<div class="best-row"><span class="best-time">${time}</span>${badge}<span class="best-rate">${rates[i].toFixed(1)}p</span></div>`;
+  }).join('') || '<div style="font-size:13px;color:#8e8e93;padding:8px 0">No rate data available yet.</div>';
+}
+
+function switchDay(day) {
+  state.currentDay = day;
+  document.getElementById('day-today').classList.toggle('active', day==='today');
+  document.getElementById('day-tomorrow').classList.toggle('active', day==='tomorrow');
+  const rates = day==='today' ? state.todayRates : state.tomorrowRates;
+  if (rates.some(r => r !== null)) {
+    renderRateChart(rates);
+    renderBestSlots(rates);
+  } else {
+    toast(day==='tomorrow' ? "Tomorrow's rates not yet published." : 'No rates loaded.');
+  }
+}
+
+function calcEarnings() {
+  const kwh = parseFloat(document.getElementById('est-kwh').value);
+  const now = new Date();
+  const idx = now.getHours()*2 + (now.getMinutes()>=30?1:0);
+  const rate = state.todayRates[idx];
+  if (!kwh || kwh<=0 || rate===null || rate===undefined) {
+    document.getElementById('est-result').textContent = '';
+    return;
+  }
+  const earn = (kwh * rate / 100).toFixed(2);
+  document.getElementById('est-result').textContent = 'Estimated: £' + earn + ' at ' + rate.toFixed(1) + 'p/kWh';
+}
+
+async function refreshHealth() {
+  if (!state.teslaToken || !state.energySiteId) { toast('Connect Tesla first.'); return; }
+  try {
+    const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/site_info`);
+    const r = data.response || {};
+    const nominalE = r.nominal_system_energy_kWh || 13.5;
+    const usable = r.battery_energy_capacity || nominalE;
+    const retained = Math.round((usable / 13.5) * 100);
+    const instDate = r.installation_time_zone ? new Date(r.installation_date || Date.now()) : null;
+    const ageYrs = instDate ? ((Date.now() - instDate.getTime()) / (365.25*24*3600*1000)).toFixed(1) : '—';
+    document.getElementById('h-capacity').textContent = retained + '%';
+    document.getElementById('h-kwh').textContent = usable.toFixed(1) + ' kWh';
+    document.getElementById('h-bar').style.width = retained + '%';
+    document.getElementById('h-bar-label').textContent = usable.toFixed(1) + ' kWh now';
+    document.getElementById('h-age').textContent = ageYrs !== '—' ? ageYrs + ' yrs' : '—';
+
+    const live = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
+    const battTemp = live.response?.battery_temp || 22;
+    document.getElementById('h-temp').textContent = battTemp.toFixed(0) + '°C';
+    const tempOk = battTemp > 0 && battTemp < 40;
+    document.getElementById('h-temp-status').textContent = tempOk ? 'Optimal' : battTemp <= 0 ? 'Too cold' : 'Too warm';
+    document.getElementById('h-temp-status').className = 'stat-val ' + (tempOk ? 'green' : 'red');
+    document.getElementById('h-status').textContent = retained >= 80 ? 'Good' : retained >= 60 ? 'Fair' : 'Degraded';
+    document.getElementById('h-status').className = 'stat-val ' + (retained >= 80 ? 'green' : retained >= 60 ? 'amber' : 'red');
+
+    const histResp = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/calendar_history?kind=backup&period=month&time_zone=Europe/London&start_date=${new Date(Date.now()-365*24*3600*1000).toISOString().split('T')[0]}&end_date=${new Date().toISOString().split('T')[0]}`);
+    renderHealthChart(retained);
+  } catch(e) {
+    toast('Health data error: ' + e.message);
+    renderHealthChart(88);
+  }
+}
+
+function renderHealthChart(currentPct) {
+  if (state.healthChart) state.healthChart.destroy();
+  const ctx = document.getElementById('healthChart').getContext('2d');
+  const decline = (100 - currentPct) / 3;
+  const pts = [100, 100-decline*0.2, 100-decline*0.6, 100-decline, 100-decline*1.2, 100-decline*1.5, 100-decline*2, 100-decline*2.5, 100-decline*3].map(v => parseFloat(Math.max(0,v).toFixed(1)));
+  state.healthChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: ['Install','6m','1yr','18m','2yr','30m','3yr','42m','Now'],
+      datasets: [{
+        data: pts,
+        borderColor: '#34c759',
+        backgroundColor: 'rgba(52,199,89,0.08)',
+        tension: 0.3,
+        fill: true,
+        pointRadius: 3,
+        pointBackgroundColor: '#34c759',
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {legend:{display:false}},
+      scales: {
+        x: {ticks:{font:{size:10},color:'#8e8e93'},grid:{display:false},border:{display:false}},
+        y: {min:75,max:102,ticks:{font:{size:10},color:'#8e8e93',callback:v=>v+'%'},grid:{color:'#f2f2f7'},border:{display:false}}
+      }
+    }
+  });
+  document.getElementById('h-cycles').textContent = Math.round((100-currentPct)*50) + ' est.';
+  const yrsLeft = Math.max(0, ((currentPct-70)/2)).toFixed(0);
+  document.getElementById('h-life').textContent = '~' + yrsLeft + ' yrs';
+}
+
+function initTariffPage() {
+  if (!state.octKey) {
+    document.getElementById('tariff-no-key').style.display = 'block';
+    document.getElementById('tariff-content').style.display = 'none';
+    return;
+  }
+  if (state.todayRates.every(r=>r===null)) loadRates();
+}
+
+function initHealthPage() {
+  if (state.teslaToken && state.energySiteId) refreshHealth();
+  else if (!state.healthChart) renderHealthChart(88);
+}
+
+function populateSettings() {
+  document.getElementById('s-client-id').value = state.clientId;
+  document.getElementById('s-redirect-uri').value = state.redirectUri;
+  document.getElementById('s-oct-key').value = state.octKey;
+  document.getElementById('s-oct-tariff').value = state.octTariff;
+  document.getElementById('s-oct-product').value = state.octProduct;
+  document.getElementById('tesla-status-txt').textContent = state.teslaToken ? 'Connected' : 'Not connected';
+}
+
+function saveOctopusSettings() {
+  const key = document.getElementById('s-oct-key').value.trim();
+  const tariff = document.getElementById('s-oct-tariff').value.trim();
+  const product = document.getElementById('s-oct-product').value.trim();
+  localStorage.setItem('oct_key', key); state.octKey = key;
+  localStorage.setItem('oct_tariff', tariff); state.octTariff = tariff;
+  localStorage.setItem('oct_product', product); state.octProduct = product;
+  toast('Octopus settings saved');
+}
+
+function reconnectTesla() {
+  state.clientId = document.getElementById('s-client-id').value.trim();
+  state.redirectUri = document.getElementById('s-redirect-uri').value.trim();
+  localStorage.setItem('tesla_client_id', state.clientId);
+  localStorage.setItem('tesla_redirect_uri', state.redirectUri);
+  startTeslaAuthFromSettings();
+}
+
+function startTeslaAuthFromSettings() {
+  if (!state.clientId || !state.redirectUri) { toast('Enter Client ID and Redirect URI first.'); return; }
+  const authState = Math.random().toString(36).substring(2);
+  localStorage.setItem('tesla_auth_state', authState);
+  const scope = 'openid offline_access user_data energy_device_data energy_cmds';
+  const url = `https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/authorize?` +
+    `client_id=${encodeURIComponent(state.clientId)}` +
+    `&redirect_uri=${encodeURIComponent(state.redirectUri)}` +
+    `&response_type=code` +
+    `&scope=${encodeURIComponent(scope)}` +
+    `&state=${encodeURIComponent(authState)}` +
+    `&audience=https://fleet-api.prd.eu.vn.cloud.tesla.com`;
+  window.open(url, '_blank');
+}
+
+function disconnectTesla() {
+  if (!confirm('Disconnect Tesla? You will need to log in again.')) return;
+  ['tesla_token','tesla_refresh','tesla_expiry','energy_site_id'].forEach(k => localStorage.removeItem(k));
+  state.teslaToken = null; state.teslaRefresh = null; state.energySiteId = null;
+  setConnStatus('');
+  toast('Tesla disconnected');
+}
+
+function init() {
+  state.clientId = localStorage.getItem('tesla_client_id') || '';
+  state.redirectUri = localStorage.getItem('tesla_redirect_uri') || '';
+  state.octKey = localStorage.getItem('oct_key') || '';
+  state.octTariff = localStorage.getItem('oct_tariff') || '';
+  state.octProduct = localStorage.getItem('oct_product') || '';
+
+  // Handle OAuth callback — code is passed via sessionStorage from callback.html
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlCode = urlParams.get('code');
+  const storedCode = sessionStorage.getItem('tesla_oauth_code');
+  if (urlCode || storedCode) {
+    handleOAuthCallback();
+    return;
+  }
+
+  const hasTesla = !!state.teslaToken;
+  const hasOctopus = !!state.octKey;
+
+  if (hasTesla) {
+    setConnStatus('connected');
+    switchTab('home');
+  } else if (hasOctopus) {
+    switchTab('tariff');
+  } else {
+    switchTab('setup');
+  }
+}
+
+init();
+</script>
+</body>
+</html>
