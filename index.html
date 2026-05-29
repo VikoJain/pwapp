@@ -661,6 +661,10 @@ function updateHomeUI(live) {
   const kwh = ((pct/100)*13.5).toFixed(1);
   const solarW=live.solar_power||0, gridW=live.grid_power||0, loadW=live.load_power||0, battW=live.battery_power||0;
   const exportW = gridW<0 ? Math.abs(gridW) : 0;
+  // Store for interpolation
+  lastKnownPct = pct;
+  lastKnownBattW = battW;
+  lastPollTime = Date.now();
   document.getElementById('bat-pct').textContent = pct+'%';
   document.getElementById('bat-sub').textContent = `~${kwh} kWh · ${battW<0?'charging':battW>0?'discharging':'idle'}`;
   const fill = document.getElementById('bat-fill');
@@ -1202,7 +1206,27 @@ function init() {
   if (state.arbEnabled && state.arbPhase === 0) scheduleArbitrage();
 }
 
-let autoRefreshTimer = null;
+let interpolateTimer = null;
+let lastKnownPct = null;
+let lastKnownBattW = 0;
+let lastPollTime = null;
+
+function startPctInterpolation() {
+  if (interpolateTimer) clearInterval(interpolateTimer);
+  interpolateTimer = setInterval(() => {
+    if (lastKnownPct === null || !lastPollTime) return;
+    // Only interpolate if discharging (positive battery_power = discharging)
+    if (lastKnownBattW <= 0) return;
+    const secsSincePoll = (Date.now() - lastPollTime) / 1000;
+    const dropPerSec = (lastKnownBattW / 13500) * 100 / 3600; // % per second
+    const estimatedPct = Math.max(0, lastKnownPct - (dropPerSec * secsSincePoll));
+    // Update display with interpolated value
+    document.getElementById('bat-pct').textContent = estimatedPct.toFixed(1)+'%';
+    const fill = document.getElementById('bat-fill');
+    fill.style.width = estimatedPct+'%';
+    fill.className = 'bat-fill'+(estimatedPct<=20?' low':estimatedPct<=40?' warn':'');
+  }, 5000); // Update display every 5 seconds
+}
 function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
   // Fire immediately on start, then every 30 seconds
