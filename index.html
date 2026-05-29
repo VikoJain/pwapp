@@ -155,6 +155,13 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 .arb-earn-val{font-size:16px;font-weight:700;color:#34c759}
 .arb-earn-lbl{font-size:10px;color:#8e8e93;margin-top:2px}
 .log-box{background:#f2f2f7;border-radius:10px;padding:10px 12px;font-size:11px;color:#3c3c43;font-family:monospace;max-height:120px;overflow-y:auto;margin-top:4px;line-height:1.6}
+.dev-test-row{padding:10px 0;border-bottom:1px solid #f2f2f7}
+.dev-test-row:last-child{border:none}
+.dev-test-label{font-size:13px;font-weight:500;margin-bottom:6px}
+.dev-test-sub{font-size:11px;color:#8e8e93;margin-bottom:6px}
+.dev-test-btn{padding:7px 16px;border-radius:9px;background:#007aff;color:#fff;font-size:13px;font-weight:600;cursor:pointer;border:none}
+.dev-test-btn:disabled{background:#c7c7cc;cursor:not-allowed}
+.dev-test-result{font-size:12px;font-family:monospace;margin-top:6px;min-height:16px;word-break:break-all;line-height:1.5}
 </style>
 </head>
 <body>
@@ -382,6 +389,49 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       <div class="card">
         <div class="card-title">Activity log</div>
         <div class="log-box" id="arb-log">No activity yet.</div>
+      </div>
+
+      <div class="card" id="dev-test-card">
+        <div class="card-title">Developer tests</div>
+        <div class="dev-test-row">
+          <div class="dev-test-label">Test 1 — Read battery level</div>
+          <button class="dev-test-btn" id="dt1-btn" onclick="devTest1()">Run</button>
+          <div class="dev-test-result" id="dt1-result"></div>
+        </div>
+        <div class="dev-test-row">
+          <div class="dev-test-label">Test 2 — Switch to Self-Powered mode</div>
+          <div class="dev-test-sub">Check Tesla app: does mode change to Self-Powered?</div>
+          <button class="dev-test-btn" id="dt2-btn" onclick="devTest2()">Run</button>
+          <div class="dev-test-result" id="dt2-result"></div>
+        </div>
+        <div class="dev-test-row">
+          <div class="dev-test-label">Test 3 — Enable export and verify after 5 seconds</div>
+          <div class="dev-test-sub">Enables export, waits 5s, then reads live status to confirm exporting.</div>
+          <button class="dev-test-btn" id="dt3-btn" onclick="devTest3()">Run</button>
+          <div class="dev-test-result" id="dt3-result"></div>
+        </div>
+        <div class="dev-test-row">
+          <div class="dev-test-label">Test 4 — Disable export</div>
+          <div class="dev-test-sub">Check Tesla app: does Permission to Export toggle off?</div>
+          <button class="dev-test-btn" id="dt4-btn" onclick="devTest4()">Run</button>
+          <div class="dev-test-result" id="dt4-result"></div>
+        </div>
+        <div class="dev-test-row">
+          <div class="dev-test-label">Test 5 — Force grid charge (100% reserve)</div>
+          <div class="dev-test-sub">Check Tesla app: does backup reserve jump to 100%?</div>
+          <button class="dev-test-btn" id="dt5-btn" onclick="devTest5()">Run</button>
+          <div class="dev-test-result" id="dt5-result"></div>
+        </div>
+        <div class="dev-test-row">
+          <div class="dev-test-label">Test 6 — Return to normal standby (20% reserve)</div>
+          <button class="dev-test-btn" id="dt6-btn" onclick="devTest6()">Run</button>
+          <div class="dev-test-result" id="dt6-result"></div>
+        </div>
+        <div class="dev-test-row">
+          <div class="dev-test-label">Test 7 — Restore Time-Based Control</div>
+          <button class="dev-test-btn" id="dt7-btn" onclick="devTest7()">Run</button>
+          <div class="dev-test-result" id="dt7-result"></div>
+        </div>
       </div>
     </div>
 
@@ -1045,25 +1095,26 @@ function startArbMonitor() {
 
 async function startArbPhase2(liveData) {
   setArbPhase(2);
-  arbLog('Phase 2: Overriding Time-Based Control — switching to Self-Powered + enabling export');
+  arbLog('Phase 2: Switching to Self-Powered + enabling export');
+  // Record export start details for earnings calc
   const now = new Date();
   const idx = now.getHours()*2+(now.getMinutes()>=30?1:0);
   state.arbExportStartPct = 100;
   const rate = state.todayRates[idx] || state.tomorrowRates[idx] || 0;
   state.arbStats.rate = rate;
   try {
-    // Must switch away from autonomous — Time-Based Control would override export with charging
     await setOperationMode('self_consumption', 0);
     await setExportMode(true);
-    arbLog('Self-Powered mode + export enabled at '+rate.toFixed(1)+'p/kWh');
+    arbLog('Export enabled at '+rate.toFixed(1)+'p/kWh');
     toast('Arbitrage: Phase 2 — exporting to grid');
   } catch(e) { arbLog('Phase 2 error: '+e.message); }
 }
 
 async function startArbPhase3() {
   setArbPhase(3);
-  arbLog('Phase 3: Export off — recharging from grid');
-  const kwhExported = 13.5;
+  arbLog('Phase 3: Export off — charging from grid');
+  // Calculate earnings from export
+  const kwhExported = 13.5; // Full battery discharged
   const earned = (kwhExported * state.arbStats.rate) / 100;
   state.arbStats.kwh = kwhExported;
   state.arbStats.earned = earned;
@@ -1071,18 +1122,18 @@ async function startArbPhase3() {
   arbLog('Export complete — est. £'+earned.toFixed(2)+' earned ('+kwhExported+'kWh @ '+state.arbStats.rate.toFixed(1)+'p)');
   try {
     await setExportMode(false);
-    // Set backup reserve to 100% to force grid charging in Time-Based Control
-    await setOperationMode('autonomous', 100);
-    arbLog('Recharging — backup reserve set to 100%');
+    // Set high backup reserve to force grid charging
+    await setOperationMode('self_consumption', 100);
+    arbLog('Recharging from grid at backup reserve 100%');
     toast('Arbitrage: Phase 3 — recharging from grid');
   } catch(e) { arbLog('Phase 3 error: '+e.message); }
 }
 
 async function startArbPhase4() {
   setArbPhase(4);
-  arbLog('Phase 4: Fully charged — restoring normal reserve, standby until 5:30am');
+  arbLog('Phase 4: Fully charged — standby until 5:30am');
   try {
-    await setOperationMode('autonomous', 20);
+    await setOperationMode('self_consumption', 20);
     toast('Arbitrage: Phase 4 — standby, waiting for 5:30am');
   } catch(e) { arbLog('Phase 4 error: '+e.message); }
 }
@@ -1090,15 +1141,88 @@ async function startArbPhase4() {
 async function startArbPhase5() {
   setArbPhase(0);
   if (state.arbMonitorTimer) { clearInterval(state.arbMonitorTimer); state.arbMonitorTimer = null; }
-  arbLog('Phase 5: Restoring normal Time-Based Control with 20% reserve');
+  arbLog('Phase 5: Returning to Time-Based Control');
   try {
-    await setExportMode(false);
     await setOperationMode('autonomous', 20);
+    await setExportMode(false);
     arbLog('=== Cycle complete — Time-Based Control restored ===');
     toast('Arbitrage cycle complete! £'+state.arbStats.earned.toFixed(2)+' earned');
+    // Schedule next night
     scheduleArbitrage();
     renderArbUI();
   } catch(e) { arbLog('Phase 5 error: '+e.message); }
+}
+
+// ── Developer tests ───────────────────────────────────────
+function devSetRunning(n) {
+  const el = document.getElementById('dt'+n+'-result');
+  const btn = document.getElementById('dt'+n+'-btn');
+  el.textContent = 'Running...'; el.style.color = '#8e8e93';
+  btn.disabled = true;
+  return el;
+}
+function devDone(n, msg, ok) {
+  const el = document.getElementById('dt'+n+'-result');
+  el.textContent = msg; el.style.color = ok ? '#34c759' : '#ff3b30';
+  document.getElementById('dt'+n+'-btn').disabled = false;
+}
+
+async function devTest1() {
+  const el = devSetRunning(1);
+  try {
+    const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
+    const pct = Math.round(data.response.percentage_charged);
+    const mode = data.response.operation;
+    devDone(1, `Battery: ${pct}% · Mode: ${mode}`, true);
+  } catch(e) { devDone(1, 'Error: '+e.message, false); }
+}
+async function devTest2() {
+  devSetRunning(2);
+  try {
+    const r = await setOperationMode('self_consumption', 0);
+    devDone(2, JSON.stringify(r), true);
+  } catch(e) { devDone(2, 'Error: '+e.message, false); }
+}
+async function devTest3() {
+  devSetRunning(3);
+  try {
+    await setExportMode(true);
+    document.getElementById('dt3-result').textContent = 'Export enabled — verifying in 5s...';
+    document.getElementById('dt3-result').style.color = '#8e8e93';
+    await new Promise(res => setTimeout(res, 5000));
+    const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
+    const gridW = data.response.grid_power || 0;
+    const exporting = gridW < 0;
+    devDone(3, exporting ? `Confirmed exporting — ${(Math.abs(gridW)/1000).toFixed(2)} kW to grid` : `Export enabled but grid_power is ${(gridW/1000).toFixed(2)} kW (may need a moment)`, exporting);
+  } catch(e) { devDone(3, 'Error: '+e.message, false); }
+}
+async function devTest4() {
+  devSetRunning(4);
+  try {
+    const r = await setExportMode(false);
+    devDone(4, JSON.stringify(r), true);
+  } catch(e) { devDone(4, 'Error: '+e.message, false); }
+}
+async function devTest5() {
+  devSetRunning(5);
+  try {
+    const r = await setOperationMode('self_consumption', 100);
+    devDone(5, JSON.stringify(r), true);
+  } catch(e) { devDone(5, 'Error: '+e.message, false); }
+}
+async function devTest6() {
+  devSetRunning(6);
+  try {
+    const r = await setOperationMode('self_consumption', 20);
+    devDone(6, JSON.stringify(r), true);
+  } catch(e) { devDone(6, 'Error: '+e.message, false); }
+}
+async function devTest7() {
+  devSetRunning(7);
+  try {
+    const r = await setOperationMode('autonomous', 20);
+    devDone(7, JSON.stringify(r), true);
+  } catch(e) { devDone(7, 'Error: '+e.message, false); }
 }
 
 // ── Health ────────────────────────────────────────────────
@@ -1209,6 +1333,7 @@ function init() {
 }
 
 let interpolateTimer = null;
+let autoRefreshTimer = null;
 let lastKnownPct = null;
 let lastKnownBattW = 0;
 let lastPollTime = null;
