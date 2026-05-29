@@ -1185,8 +1185,23 @@ function init() {
   else if (state.octKey) { switchTab('tariff'); }
   else { switchTab('setup'); }
 
+  // Start background auto-refresh every 30 seconds
+  if (state.teslaToken && state.energySiteId) startAutoRefresh();
+
   // Restore arbitrage if it was enabled
   if (state.arbEnabled && state.arbPhase === 0) scheduleArbitrage();
+}
+
+let autoRefreshTimer = null;
+function startAutoRefresh() {
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+  autoRefreshTimer = setInterval(async () => {
+    if (!state.teslaToken || !state.energySiteId) return;
+    try {
+      const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
+      updateHomeUI(data.response);
+    } catch(e) {}
+  }, 30000);
 }
 
 init();
