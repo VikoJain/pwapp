@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Connecting...</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f5f5f7;color:#1d1d1f}
+  .wrap{text-align:center;padding:40px 20px}
+  .spinner{width:40px;height:40px;border:3px solid #e5e5ea;border-top-color:#007aff;border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 20px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  h2{font-size:18px;font-weight:600;margin-bottom:8px}
+  p{font-size:14px;color:#8e8e93}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="spinner"></div>
+  <h2>Connecting to Tesla...</h2>
+  <p>Please wait while we complete your login.</p>
+</div>
+<script>
+  // Grab the full query string Tesla sent back
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  const state = params.get('state');
+  const error = params.get('error');
+
+  if (error) {
+    document.querySelector('h2').textContent = 'Login failed';
+    document.querySelector('p').textContent = 'Tesla returned an error: ' + error;
+    document.querySelector('.spinner').style.display = 'none';
+  } else if (code) {
+    // Store the code and state so index.html can pick them up
+    sessionStorage.setItem('tesla_oauth_code', code);
+    sessionStorage.setItem('tesla_oauth_state', state || '');
+    // Redirect to the main app
+    window.location.replace('/');
+  } else {
+    document.querySelector('h2').textContent = 'Something went wrong';
+    document.querySelector('p').textContent = 'No authorisation code received from Tesla.';
+    document.querySelector('.spinner').style.display = 'none';
+  }
+</script>
+</body>
+</html>
