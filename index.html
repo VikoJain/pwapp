@@ -1277,7 +1277,14 @@ async function devTest2c() {
   devSetRunning('2c');
   try {
     const tariff = await readAndStoreTariff();
-    devDone('2c', 'Tariff stored. OFF_PEAK: '+JSON.stringify(tariff.seasons?.Summer?.tou_periods?.OFF_PEAK), true);
+    // Also probe the time_of_use_settings endpoint
+    const touResp = await fetch('/.netlify/functions/tesla-proxy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: TESLA_API+`/api/1/energy_sites/${state.energySiteId}/time_of_use_settings`, method: 'GET', body: null, token: state.teslaToken })
+    });
+    const touText = await touResp.text();
+    const touPreview = touText.startsWith('<') ? 'time_of_use_settings GET: 404 (not available)' : 'time_of_use_settings GET: '+touText.substring(0, 100);
+    devDone('2c', 'Tariff stored. OFF_PEAK: '+JSON.stringify(tariff.seasons?.Summer?.tou_periods?.OFF_PEAK)+' | '+touPreview, true);
   } catch(e) { devDone('2c', 'Error: '+e.message, false); }
 }
 async function devTest2b() {
