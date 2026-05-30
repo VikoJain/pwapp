@@ -1244,8 +1244,8 @@ async function devTest2e() {
 async function devTest2c() {
   devSetRunning('2c');
   try {
-    const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/tariff_rate`);
-    devDone('2c', JSON.stringify(data, null, 2), true);
+    const tariff = await readAndStoreTariff();
+    devDone('2c', 'Tariff stored. OFF_PEAK: '+JSON.stringify(tariff.seasons?.Summer?.tou_periods?.OFF_PEAK), true);
   } catch(e) { devDone('2c', 'Error: '+e.message, false); }
 }
 async function devTest2b() {
