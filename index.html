@@ -1250,9 +1250,20 @@ async function devTest1() {
 async function devTest2d() {
   devSetRunning('2d');
   try {
-    const r = await setExportTariff();
-    devDone('2d', 'Export tariff set — OFF_PEAK removed. Check Tesla app and run Test 1 after ~60s to confirm exporting.', true);
-  } catch(e) { devDone('2d', 'Error: '+e.message, false); }
+    const tariff = state.normalTariff || JSON.parse(localStorage.getItem('arb_normal_tariff') || 'null');
+    if (!tariff) { devDone('2d', 'Error: tariff not stored — run 2c first', false); return; }
+    const exportPeriods = {
+      OFF_PEAK: [{ fromDayOfWeek: 0, toDayOfWeek: 6, fromHour: 23, fromMinute: 30, toHour: 0, toMinute: 0 }],
+      ON_PEAK:  [{ fromDayOfWeek: 0, toDayOfWeek: 6, fromHour: 0,  fromMinute: 0,  toHour: 23, toMinute: 30 }]
+    };
+    const payload = buildTariffPayload(tariff, exportPeriods);
+    const resp = await fetch('/.netlify/functions/tesla-proxy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: TESLA_API+`/api/1/energy_sites/${state.energySiteId}/tariff_rate`, method: 'POST', body: payload, token: state.teslaToken })
+    });
+    const text = await resp.text();
+    devDone('2d', 'HTTP '+resp.status+': '+text.substring(0, 400), resp.ok);
+  } catch(e) { devDone('2d', e.constructor.name+': '+e.message, false); }
 }
 async function devTest2e() {
   devSetRunning('2e');
