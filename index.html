@@ -622,7 +622,7 @@ function switchTab(name) {
   if (name==='health') initHealthPage();
   if (name==='settings') populateSettings();
   if (name==='home' && state.teslaToken && state.energySiteId) startAutoRefresh();
-  if (name==='arb') renderArbUI();
+  if (name==='arb') { renderArbUI(); startServerPoll(); }
 }
 function showSettings() { switchTab('settings'); }
 function toast(msg, dur=2800) {
@@ -989,6 +989,62 @@ function initTariffPage() {
   if (state.todayRates.every(r=>r===null)) loadRates();
 }
 
+// ── Server-side arbitrage ─────────────────────────────────
+async function syncTokenToServer() {
+  if (!state.teslaToken || !state.energySiteId) return;
+  try {
+    await fetch('/.netlify/functions/arb-api', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'save_token',
+        access: state.teslaToken,
+        refresh: state.teslaRefresh,
+        expiry: parseInt(localStorage.getItem('tesla_expiry') || '0'),
+        clientId: state.clientId,
+        clientSecret: state.clientSecret,
+        apiBase: TESLA_API,
+        energySiteId: state.energySiteId
+      })
+    });
+  } catch(e) { console.warn('Token sync failed:', e.message); }
+}
+
+async function toggleServerArbitrage(enabled) {
+  if (enabled) await syncTokenToServer();
+  await fetch('/.netlify/functions/arb-api', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'toggle', enabled })
+  });
+}
+
+let serverPollTimer = null;
+async function pollServerStatus() {
+  try {
+    const resp = await fetch('/.netlify/functions/arb-api');
+    const data = await resp.json();
+    // Update log display
+    const logEl = document.getElementById('arb-log');
+    if (logEl && data.log && data.log.length) {
+      logEl.innerHTML = data.log.join('<br>');
+    }
+    // Update phase display
+    if (typeof data.phase !== 'undefined') {
+      state.arbPhase = data.phase;
+      renderArbUI();
+    }
+    // Update earnings
+    if (data.stats) {
+      state.arbStats = data.stats;
+    }
+  } catch(e) {}
+}
+
+function startServerPoll() {
+  if (serverPollTimer) clearInterval(serverPollTimer);
+  pollServerStatus();
+  serverPollTimer = setInterval(pollServerStatus, 30000);
+}
+
 // ── Tariff schedule helpers ───────────────────────────────
 async function readAndStoreTariff() {
   const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/tariff_rate`);
@@ -1094,19 +1150,20 @@ function renderArbUI() {
   if (logEl) logEl.innerHTML = state.arbLog.join('<br>') || 'No activity yet.';
 }
 
-function toggleArbitrage() {
+async function toggleArbitrage() {
   state.arbEnabled = !state.arbEnabled;
   localStorage.setItem('arb_enabled', state.arbEnabled);
   if (state.arbEnabled) {
-    arbLog('Arbitrage enabled — next cycle starts at 11:30pm');
-    toast('Arbitrage enabled — starts at 11:30pm tonight');
-    scheduleArbitrage();
+    arbLog('Arbitrage enabled — server-side, starts at 23:30');
+    toast('Arbitrage enabled — server will run it at 23:30');
+    await toggleServerArbitrage(true);
   } else {
-    arbLog('Arbitrage disabled by user');
+    arbLog('Arbitrage disabled');
     toast('Arbitrage disabled');
     if (state.arbScheduleTimer) { clearTimeout(state.arbScheduleTimer); state.arbScheduleTimer = null; }
     if (state.arbMonitorTimer) { clearInterval(state.arbMonitorTimer); state.arbMonitorTimer = null; }
     setArbPhase(0);
+    await toggleServerArbitrage(false);
   }
   renderArbUI();
 }
