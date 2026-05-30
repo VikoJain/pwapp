@@ -1,6 +1,9 @@
 [build]
   functions = "netlify/functions"
 
+[functions.arb-tick]
+  schedule = "* * * * *"
+
 [[redirects]]
   from = "/.netlify/functions/*"
   to = "/.netlify/functions/:splat"
