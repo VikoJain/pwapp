@@ -1005,19 +1005,20 @@ function buildTariffPayload(tariff, overridePeriods) {
 
 async function setExportTariff() {
   const tariff = state.normalTariff || JSON.parse(localStorage.getItem('arb_normal_tariff') || 'null');
-  if (!tariff) throw new Error('Normal tariff not stored — enable arbitrage first to store it');
-  // ON_PEAK starts at midnight so the Powerwall treats overnight as peak and discharges/exports
+  if (!tariff) throw new Error('Normal tariff not stored — run Test 2c first');
   const exportPeriods = {
     OFF_PEAK: [{ fromDayOfWeek: 0, toDayOfWeek: 6, fromHour: 23, fromMinute: 30, toHour: 0, toMinute: 0 }],
     ON_PEAK:  [{ fromDayOfWeek: 0, toDayOfWeek: 6, fromHour: 0,  fromMinute: 0,  toHour: 23, toMinute: 30 }]
   };
-  return teslaRequest(`/api/1/energy_sites/${state.energySiteId}/tariff_rate`, 'POST', buildTariffPayload(tariff, exportPeriods));
+  return teslaRequest(`/api/1/energy_sites/${state.energySiteId}/time_of_use_settings`, 'POST',
+    { tou_settings: { tariff_content_v2: buildTariffPayload(tariff, exportPeriods) } });
 }
 
 async function restoreNormalTariff() {
   const tariff = state.normalTariff || JSON.parse(localStorage.getItem('arb_normal_tariff') || 'null');
   if (!tariff) throw new Error('Normal tariff not stored');
-  return teslaRequest(`/api/1/energy_sites/${state.energySiteId}/tariff_rate`, 'POST', buildTariffPayload(tariff, null));
+  return teslaRequest(`/api/1/energy_sites/${state.energySiteId}/time_of_use_settings`, 'POST',
+    { tou_settings: { tariff_content_v2: buildTariffPayload(tariff, null) } });
 }
 
 // ── Arbitrage ─────────────────────────────────────────────
