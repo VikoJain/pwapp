@@ -1,4 +1,14 @@
-const { getStore } = require('@netlify/blobs');
+let getStore;
+try {
+  getStore = require('@netlify/blobs').getStore;
+} catch(e) {
+  exports.handler = async () => ({
+    statusCode: 500,
+    headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ error: 'Module load failed: ' + e.message })
+  });
+  return;
+}
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
