@@ -89,7 +89,7 @@ async function setExport(token, apiBase, siteId, enable) {
 }
 
 exports.handler = async () => {
-  const store = getStore('arb');
+  const store = getStore({ name: 'arb', siteID: process.env.SITE_ID, token: process.env.NETLIFY_API_TOKEN });
   const state = JSON.parse(await store.get('state') || JSON.stringify(DEFAULT_STATE));
 
   // Nothing to do if not enabled and not mid-cycle
