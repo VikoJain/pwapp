@@ -1022,20 +1022,24 @@ async function pollServerStatus() {
   try {
     const resp = await fetch('/.netlify/functions/arb-api');
     const data = await resp.json();
+    if (data.error) return;
+    // Sync enabled state from server — keeps all devices in sync
+    if (typeof data.enabled !== 'undefined' && data.enabled !== state.arbEnabled) {
+      state.arbEnabled = data.enabled;
+      localStorage.setItem('arb_enabled', data.enabled);
+    }
+    // Sync phase
+    if (typeof data.phase !== 'undefined') {
+      state.arbPhase = data.phase;
+    }
+    // Sync earnings
+    if (data.stats) state.arbStats = data.stats;
     // Update log display
     const logEl = document.getElementById('arb-log');
     if (logEl && data.log && data.log.length) {
       logEl.innerHTML = data.log.join('<br>');
     }
-    // Update phase display
-    if (typeof data.phase !== 'undefined') {
-      state.arbPhase = data.phase;
-      renderArbUI();
-    }
-    // Update earnings
-    if (data.stats) {
-      state.arbStats = data.stats;
-    }
+    renderArbUI();
   } catch(e) {}
 }
 
@@ -1593,6 +1597,7 @@ async function autoRefreshLive() {
 }
 
 init();
+pollServerStatus();
 </script>
 </body>
 </html>
