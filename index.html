@@ -1171,9 +1171,14 @@ async function devTest1() {
   const el = devSetRunning(1);
   try {
     const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
-    const pct = Math.round(data.response.percentage_charged);
-    const mode = data.response.operation;
-    devDone(1, `Battery: ${pct}% · Mode: ${mode}`, true);
+    const r = data.response;
+    const pct = Math.round(r.percentage_charged);
+    const mode = r.operation;
+    const battW = r.battery_power || 0;
+    const gridW = r.grid_power || 0;
+    const battStatus = battW < 0 ? `charging ${(Math.abs(battW)/1000).toFixed(2)}kW` : battW > 0 ? `discharging ${(battW/1000).toFixed(2)}kW` : 'idle';
+    const gridStatus = gridW < 0 ? `exporting ${(Math.abs(gridW)/1000).toFixed(2)}kW` : gridW > 0 ? `importing ${(gridW/1000).toFixed(2)}kW` : 'grid 0kW';
+    devDone(1, `Battery: ${pct}% · ${battStatus} · ${gridStatus} · Mode: ${mode}`, true);
   } catch(e) { devDone(1, 'Error: '+e.message, false); }
 }
 async function devTest2() {
