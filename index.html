@@ -411,6 +411,12 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <div class="dev-test-result" id="dt3-result"></div>
         </div>
         <div class="dev-test-row">
+          <div class="dev-test-label">Test 2b — Force export mode</div>
+          <div class="dev-test-sub">Sets operation to export mode with 0% reserve — should push battery to grid regardless of home load.</div>
+          <button class="dev-test-btn" id="dt2b-btn" onclick="devTest2b()">Run</button>
+          <div class="dev-test-result" id="dt2b-result"></div>
+        </div>
+        <div class="dev-test-row">
           <div class="dev-test-label">Test 4 — Disable export</div>
           <div class="dev-test-sub">Check Tesla app: does Permission to Export toggle off?</div>
           <button class="dev-test-btn" id="dt4-btn" onclick="devTest4()">Run</button>
@@ -1157,14 +1163,15 @@ async function startArbPhase5() {
 function devSetRunning(n) {
   const el = document.getElementById('dt'+n+'-result');
   const btn = document.getElementById('dt'+n+'-btn');
-  el.textContent = 'Running...'; el.style.color = '#8e8e93';
-  btn.disabled = true;
+  if (el) { el.textContent = 'Running...'; el.style.color = '#8e8e93'; }
+  if (btn) btn.disabled = true;
   return el;
 }
 function devDone(n, msg, ok) {
   const el = document.getElementById('dt'+n+'-result');
-  el.textContent = msg; el.style.color = ok ? '#34c759' : '#ff3b30';
-  document.getElementById('dt'+n+'-btn').disabled = false;
+  const btn = document.getElementById('dt'+n+'-btn');
+  if (el) { el.textContent = msg; el.style.color = ok ? '#34c759' : '#ff3b30'; }
+  if (btn) btn.disabled = false;
 }
 
 async function devTest1() {
@@ -1180,6 +1187,21 @@ async function devTest1() {
     const gridStatus = gridW < 0 ? `exporting ${(Math.abs(gridW)/1000).toFixed(2)}kW` : gridW > 0 ? `importing ${(gridW/1000).toFixed(2)}kW` : 'grid 0kW';
     devDone(1, `Battery: ${pct}% · ${battStatus} · ${gridStatus} · Mode: ${mode}`, true);
   } catch(e) { devDone(1, 'Error: '+e.message, false); }
+}
+async function devTest2b() {
+  devSetRunning('2b');
+  try {
+    const r = await setOperationMode('export', 0);
+    document.getElementById('dt2b-result').textContent = 'Export mode set — checking in 30s...';
+    document.getElementById('dt2b-result').style.color = '#8e8e93';
+    await new Promise(res => setTimeout(res, 30000));
+    const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
+    const battW = data.response.battery_power || 0;
+    const gridW = data.response.grid_power || 0;
+    const exporting = gridW < 0;
+    const msg = `Battery: ${battW > 0 ? 'discharging ' + (battW/1000).toFixed(2) + 'kW' : 'idle'} · Grid: ${exporting ? 'exporting ' + (Math.abs(gridW)/1000).toFixed(2) + 'kW' : gridW + 'W'}`;
+    devDone('2b', msg, exporting);
+  } catch(e) { devDone('2b', 'Error: '+e.message, false); }
 }
 async function devTest2() {
   devSetRunning(2);
