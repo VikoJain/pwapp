@@ -1,4 +1,3 @@
-const { getStore } = require('@netlify/blobs');
 const https = require('https');
 const crypto = require('crypto');
 
@@ -89,6 +88,7 @@ async function setExport(token, apiBase, siteId, enable) {
 }
 
 exports.handler = async () => {
+  const { getStore } = require('@netlify/blobs');
   const store = getStore({ name: 'arb', siteID: process.env.SITE_ID, token: process.env.NETLIFY_API_TOKEN });
   const state = JSON.parse(await store.get('state') || JSON.stringify(DEFAULT_STATE));
 
