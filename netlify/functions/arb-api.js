@@ -9,7 +9,7 @@ exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers: CORS, body: '' };
   try {
     const { getStore } = require('@netlify/blobs');
-    const store = getStore('arb');
+    const store = getStore({ name: 'arb', siteID: process.env.SITE_ID, token: process.env.NETLIFY_API_TOKEN });
     const state = JSON.parse(await store.get('state') || '{"phase":0,"enabled":false,"log":[],"stats":{"kwh":0,"rate":0,"earned":0}}');
 
     if (event.httpMethod === 'GET') {
