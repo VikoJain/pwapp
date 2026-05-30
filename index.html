@@ -423,6 +423,18 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <div class="dev-test-result" id="dt2c-result"></div>
         </div>
         <div class="dev-test-row">
+          <div class="dev-test-label">Test 2d — Set export tariff (removes OFF_PEAK)</div>
+          <div class="dev-test-sub">Removes the OFF_PEAK window so the Powerwall treats now as ON_PEAK and discharges. Check Tesla app — does the battery start exporting?</div>
+          <button class="dev-test-btn" id="dt2d-btn" onclick="devTest2d()">Run</button>
+          <div class="dev-test-result" id="dt2d-result"></div>
+        </div>
+        <div class="dev-test-row">
+          <div class="dev-test-label">Test 2e — Restore normal tariff (OFF_PEAK 23:30–05:30)</div>
+          <div class="dev-test-sub">Restores the original rate schedule. Run this after testing 2d.</div>
+          <button class="dev-test-btn" id="dt2e-btn" onclick="devTest2e()">Run</button>
+          <div class="dev-test-result" id="dt2e-result"></div>
+        </div>
+        <div class="dev-test-row">
           <div class="dev-test-label">Test 4 — Disable export</div>
           <div class="dev-test-sub">Check Tesla app: does Permission to Export toggle off?</div>
           <button class="dev-test-btn" id="dt4-btn" onclick="devTest4()">Run</button>
@@ -578,6 +590,7 @@ let state = {
   arbLog: JSON.parse(localStorage.getItem('arb_log') || '[]'),
   arbStats: JSON.parse(localStorage.getItem('arb_stats') || '{"kwh":0,"rate":0,"earned":0}'),
   arbExportStartPct: 0,
+  normalTariff: JSON.parse(localStorage.getItem('arb_normal_tariff') || 'null'),
 };
 
 // ── UI helpers ────────────────────────────────────────────
@@ -963,6 +976,30 @@ function initTariffPage() {
   if (state.todayRates.every(r=>r===null)) loadRates();
 }
 
+// ── Tariff schedule helpers ───────────────────────────────
+async function readAndStoreTariff() {
+  const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/tariff_rate`);
+  state.normalTariff = data.response;
+  localStorage.setItem('arb_normal_tariff', JSON.stringify(state.normalTariff));
+  return state.normalTariff;
+}
+
+async function setExportTariff() {
+  const tariff = state.normalTariff || JSON.parse(localStorage.getItem('arb_normal_tariff') || 'null');
+  if (!tariff) throw new Error('Normal tariff not stored — enable arbitrage first to store it');
+  const t = JSON.parse(JSON.stringify(tariff));
+  // Remove OFF_PEAK so the whole night becomes ON_PEAK → Powerwall discharges and exports
+  if (t.seasons?.Summer?.tou_periods) delete t.seasons.Summer.tou_periods.OFF_PEAK;
+  if (t.sell_tariff?.seasons?.Summer?.tou_periods) delete t.sell_tariff.seasons.Summer.tou_periods.OFF_PEAK;
+  return teslaRequest(`/api/1/energy_sites/${state.energySiteId}/tariff_rate`, 'POST', t);
+}
+
+async function restoreNormalTariff() {
+  const tariff = state.normalTariff || JSON.parse(localStorage.getItem('arb_normal_tariff') || 'null');
+  if (!tariff) throw new Error('Normal tariff not stored');
+  return teslaRequest(`/api/1/energy_sites/${state.energySiteId}/tariff_rate`, 'POST', tariff);
+}
+
 // ── Arbitrage ─────────────────────────────────────────────
 function arbLog(msg) {
   const time = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
@@ -1056,10 +1093,13 @@ async function startArbCycle() {
   if (!state.arbEnabled) return;
   arbLog('=== Arbitrage cycle started ===');
   setArbPhase(1);
-  // Phase 1: Time-Based Control is already charging — we just monitor until 100%
-  arbLog('Phase 1: Monitoring charge — waiting for 100%');
+  try {
+    await readAndStoreTariff();
+    arbLog('Phase 1: Normal tariff stored — monitoring charge, waiting for 100%');
+  } catch(e) {
+    arbLog('Phase 1: Warning — could not store tariff: '+e.message);
+  }
   toast('Arbitrage: Phase 1 — waiting for full charge');
-  // Reset last night stats
   state.arbStats = {kwh:0, rate:0, earned:0};
   localStorage.setItem('arb_stats', JSON.stringify(state.arbStats));
   startArbMonitor();
@@ -1107,26 +1147,24 @@ function startArbMonitor() {
 
 async function startArbPhase2(liveData) {
   setArbPhase(2);
-  arbLog('Phase 2: Switching to Self-Powered + enabling export');
-  // Record export start details for earnings calc
+  arbLog('Phase 2: Setting export tariff + enabling export');
   const now = new Date();
   const idx = now.getHours()*2+(now.getMinutes()>=30?1:0);
   state.arbExportStartPct = 100;
   const rate = state.todayRates[idx] || state.tomorrowRates[idx] || 0;
   state.arbStats.rate = rate;
   try {
-    await setOperationMode('self_consumption', 0);
+    await setExportTariff();
     await setExportMode(true);
-    arbLog('Export enabled at '+rate.toFixed(1)+'p/kWh');
+    arbLog('Export tariff active + export enabled at '+rate.toFixed(1)+'p/kWh');
     toast('Arbitrage: Phase 2 — exporting to grid');
   } catch(e) { arbLog('Phase 2 error: '+e.message); }
 }
 
 async function startArbPhase3() {
   setArbPhase(3);
-  arbLog('Phase 3: Export off — charging from grid');
-  // Calculate earnings from export
-  const kwhExported = 13.5; // Full battery discharged
+  arbLog('Phase 3: Export off — restoring normal tariff to recharge');
+  const kwhExported = 13.5;
   const earned = (kwhExported * state.arbStats.rate) / 100;
   state.arbStats.kwh = kwhExported;
   state.arbStats.earned = earned;
@@ -1134,9 +1172,8 @@ async function startArbPhase3() {
   arbLog('Export complete — est. £'+earned.toFixed(2)+' earned ('+kwhExported+'kWh @ '+state.arbStats.rate.toFixed(1)+'p)');
   try {
     await setExportMode(false);
-    // Set high backup reserve to force grid charging
-    await setOperationMode('self_consumption', 100);
-    arbLog('Recharging from grid at backup reserve 100%');
+    await restoreNormalTariff();
+    arbLog('Normal tariff restored — Time-Based Control recharging from off-peak grid');
     toast('Arbitrage: Phase 3 — recharging from grid');
   } catch(e) { arbLog('Phase 3 error: '+e.message); }
 }
@@ -1144,22 +1181,18 @@ async function startArbPhase3() {
 async function startArbPhase4() {
   setArbPhase(4);
   arbLog('Phase 4: Fully charged — standby until 5:30am');
-  try {
-    await setOperationMode('self_consumption', 20);
-    toast('Arbitrage: Phase 4 — standby, waiting for 5:30am');
-  } catch(e) { arbLog('Phase 4 error: '+e.message); }
+  toast('Arbitrage: Phase 4 — standby, waiting for 5:30am');
 }
 
 async function startArbPhase5() {
   setArbPhase(0);
   if (state.arbMonitorTimer) { clearInterval(state.arbMonitorTimer); state.arbMonitorTimer = null; }
-  arbLog('Phase 5: Returning to Time-Based Control');
+  arbLog('Phase 5: Cycle complete — restoring normal rate schedule');
   try {
-    await setOperationMode('autonomous', 20);
     await setExportMode(false);
-    arbLog('=== Cycle complete — Time-Based Control restored ===');
+    await restoreNormalTariff();
+    arbLog('=== Cycle complete — normal rate schedule restored ===');
     toast('Arbitrage cycle complete! £'+state.arbStats.earned.toFixed(2)+' earned');
-    // Schedule next night
     scheduleArbitrage();
     renderArbUI();
   } catch(e) { arbLog('Phase 5 error: '+e.message); }
@@ -1193,6 +1226,20 @@ async function devTest1() {
     const gridStatus = gridW < 0 ? `exporting ${(Math.abs(gridW)/1000).toFixed(2)}kW` : gridW > 0 ? `importing ${(gridW/1000).toFixed(2)}kW` : 'grid 0kW';
     devDone(1, `Battery: ${pct}% · ${battStatus} · ${gridStatus} · Mode: ${mode}`, true);
   } catch(e) { devDone(1, 'Error: '+e.message, false); }
+}
+async function devTest2d() {
+  devSetRunning('2d');
+  try {
+    const r = await setExportTariff();
+    devDone('2d', 'Export tariff set — OFF_PEAK removed. Check Tesla app and run Test 1 after ~60s to confirm exporting.', true);
+  } catch(e) { devDone('2d', 'Error: '+e.message, false); }
+}
+async function devTest2e() {
+  devSetRunning('2e');
+  try {
+    const r = await restoreNormalTariff();
+    devDone('2e', 'Normal tariff restored — OFF_PEAK 23:30–05:30 active again.', true);
+  } catch(e) { devDone('2e', 'Error: '+e.message, false); }
 }
 async function devTest2c() {
   devSetRunning('2c');
