@@ -417,6 +417,12 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <div class="dev-test-result" id="dt2b-result"></div>
         </div>
         <div class="dev-test-row">
+          <div class="dev-test-label">Test 2c — Read rate schedule</div>
+          <div class="dev-test-sub">Reads the current tariff rate JSON from Tesla — needed to build the export schedule.</div>
+          <button class="dev-test-btn" id="dt2c-btn" onclick="devTest2c()">Run</button>
+          <div class="dev-test-result" id="dt2c-result"></div>
+        </div>
+        <div class="dev-test-row">
           <div class="dev-test-label">Test 4 — Disable export</div>
           <div class="dev-test-sub">Check Tesla app: does Permission to Export toggle off?</div>
           <button class="dev-test-btn" id="dt4-btn" onclick="devTest4()">Run</button>
@@ -1187,6 +1193,13 @@ async function devTest1() {
     const gridStatus = gridW < 0 ? `exporting ${(Math.abs(gridW)/1000).toFixed(2)}kW` : gridW > 0 ? `importing ${(gridW/1000).toFixed(2)}kW` : 'grid 0kW';
     devDone(1, `Battery: ${pct}% · ${battStatus} · ${gridStatus} · Mode: ${mode}`, true);
   } catch(e) { devDone(1, 'Error: '+e.message, false); }
+}
+async function devTest2c() {
+  devSetRunning('2c');
+  try {
+    const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/tariff_rate`);
+    devDone('2c', JSON.stringify(data, null, 2), true);
+  } catch(e) { devDone('2c', 'Error: '+e.message, false); }
 }
 async function devTest2b() {
   devSetRunning('2b');
