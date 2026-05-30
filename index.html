@@ -985,12 +985,22 @@ async function readAndStoreTariff() {
 }
 
 function buildTariffPayload(tariff, overridePeriods) {
-  // Strip read-only fields the API won't accept in POST
-  const t = JSON.parse(JSON.stringify(tariff));
-  delete t.code;
-  delete t.sell_tariff;
-  if (overridePeriods) t.seasons.Summer.tou_periods = overridePeriods;
-  return t;
+  // Send only the writable fields — strip read-only and summary-only keys
+  const s = tariff.seasons.Summer;
+  return {
+    name: tariff.name,
+    utility: tariff.utility,
+    daily_charges: tariff.daily_charges,
+    demand_charges: { Summer: tariff.demand_charges.Summer || {}, Winter: {} },
+    energy_charges: { Summer: tariff.energy_charges.Summer, Winter: {} },
+    seasons: {
+      Summer: {
+        fromDay: s.fromDay, toDay: s.toDay, fromMonth: s.fromMonth, toMonth: s.toMonth,
+        tou_periods: overridePeriods || s.tou_periods
+      },
+      Winter: { fromDay: 0, toDay: 0, fromMonth: 0, toMonth: 0, tou_periods: {} }
+    }
+  };
 }
 
 async function setExportTariff() {
