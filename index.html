@@ -394,6 +394,12 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       <div class="card" id="dev-test-card">
         <div class="card-title">Developer tests</div>
         <div class="dev-test-row">
+          <div class="dev-test-label">Quick test run — all phases</div>
+          <div class="dev-test-sub">Runs the full arbitrage cycle now with compressed thresholds (92%→85%→90%) and 10s polling. Watch the activity log above. Takes ~10–15 min.</div>
+          <button class="dev-test-btn" style="background:#ff9500" onclick="devTestFullRun()">Run full cycle</button>
+          <div class="dev-test-result" id="dt-full-result"></div>
+        </div>
+        <div class="dev-test-row">
           <div class="dev-test-label">Test 1 — Read battery level</div>
           <button class="dev-test-btn" id="dt1-btn" onclick="devTest1()">Run</button>
           <div class="dev-test-result" id="dt1-result"></div>
@@ -591,6 +597,7 @@ let state = {
   arbStats: JSON.parse(localStorage.getItem('arb_stats') || '{"kwh":0,"rate":0,"earned":0}'),
   arbExportStartPct: 0,
   normalTariff: JSON.parse(localStorage.getItem('arb_normal_tariff') || 'null'),
+  arbTestMode: false,
 };
 
 // ── UI helpers ────────────────────────────────────────────
@@ -1128,6 +1135,10 @@ async function startArbCycle() {
 
 function startArbMonitor() {
   if (state.arbMonitorTimer) clearInterval(state.arbMonitorTimer);
+  const interval = state.arbTestMode ? 10000 : 60000;
+  const fullPct  = state.arbTestMode ? 90 : 98;
+  const emptyPct = state.arbTestMode ? 80 : 2;
+  const rechargePct = state.arbTestMode ? 86 : 98;
   state.arbMonitorTimer = setInterval(async () => {
     if (!state.arbEnabled) { clearInterval(state.arbMonitorTimer); return; }
     try {
@@ -1136,34 +1147,29 @@ function startArbMonitor() {
       const now = new Date();
       const h = now.getHours(), m = now.getMinutes();
 
-      // Phase 1 → Phase 2: battery at 100%
-      if (state.arbPhase === 1 && pct >= 98) {
+      if (state.arbPhase === 1 && pct >= fullPct) {
         arbLog('Phase 1 complete — battery at '+pct+'%');
         await startArbPhase2(data.response);
       }
-      // Phase 2 → Phase 3: battery at 0%
-      else if (state.arbPhase === 2 && pct <= 2) {
+      else if (state.arbPhase === 2 && pct <= emptyPct) {
         arbLog('Phase 2 complete — battery at '+pct+'%');
         await startArbPhase3();
       }
-      // Phase 3 → Phase 4: battery at 100% again
-      else if (state.arbPhase === 3 && pct >= 98) {
-        arbLog('Phase 3 complete — battery recharged to '+pct+'%');
+      else if (state.arbPhase === 3 && pct >= rechargePct) {
+        arbLog('Phase 3 complete — battery at '+pct+'%');
         await startArbPhase4();
       }
-      // Phase 4 → Phase 5: 5:30am
-      else if (state.arbPhase === 4 && h === 5 && m >= 30) {
+      else if (state.arbPhase === 4 && !state.arbTestMode && h === 5 && m >= 30) {
         await startArbPhase5();
       }
-      // Safety fallback: if it's past 5:30am and we're still running
-      else if (state.arbPhase > 0 && h >= 6) {
+      else if (state.arbPhase > 0 && !state.arbTestMode && h >= 6) {
         arbLog('Safety fallback — returning to normal mode');
         await startArbPhase5();
       }
 
       renderArbUI();
     } catch(e) { arbLog('Monitor error: '+e.message); }
-  }, 60000); // Check every minute
+  }, interval);
 }
 
 async function startArbPhase2(liveData) {
@@ -1201,8 +1207,14 @@ async function startArbPhase3() {
 
 async function startArbPhase4() {
   setArbPhase(4);
-  arbLog('Phase 4: Fully charged — standby until 5:30am');
-  toast('Arbitrage: Phase 4 — standby, waiting for 5:30am');
+  if (state.arbTestMode) {
+    arbLog('Phase 4: Test mode — advancing to Phase 5 in 2 minutes');
+    toast('Arbitrage: Phase 4 — test standby, 2 min');
+    setTimeout(() => startArbPhase5(), 120000);
+  } else {
+    arbLog('Phase 4: Fully charged — standby until 5:30am');
+    toast('Arbitrage: Phase 4 — standby, waiting for 5:30am');
+  }
 }
 
 async function startArbPhase5() {
@@ -1212,7 +1224,9 @@ async function startArbPhase5() {
   try {
     await setExportMode(false);
     await setOperationMode('autonomous', 20);
-    arbLog('=== Cycle complete — autonomous mode restored ===');
+    const testLabel = state.arbTestMode ? ' (TEST RUN)' : '';
+    state.arbTestMode = false;
+    arbLog('=== Cycle complete'+testLabel+' — autonomous mode restored ===');
     toast('Arbitrage cycle complete! £'+state.arbStats.earned.toFixed(2)+' earned');
     scheduleArbitrage();
     renderArbUI();
@@ -1247,6 +1261,15 @@ async function devTest1() {
     const gridStatus = gridW < 0 ? `exporting ${(Math.abs(gridW)/1000).toFixed(2)}kW` : gridW > 0 ? `importing ${(gridW/1000).toFixed(2)}kW` : 'grid 0kW';
     devDone(1, `Battery: ${pct}% · ${battStatus} · ${gridStatus} · Mode: ${mode}`, true);
   } catch(e) { devDone(1, 'Error: '+e.message, false); }
+}
+async function devTestFullRun() {
+  const el = document.getElementById('dt-full-result');
+  if (!state.teslaToken) { el.textContent = 'Error: connect Tesla first'; el.style.color='#ff3b30'; return; }
+  if (!state.energySiteId) { el.textContent = 'Error: no energy site found'; el.style.color='#ff3b30'; return; }
+  el.textContent = 'Test cycle started — watch the activity log'; el.style.color = '#ff9500';
+  state.arbTestMode = true;
+  state.arbEnabled = true;
+  await startArbCycle();
 }
 async function devTest2d() {
   devSetRunning('2d');
