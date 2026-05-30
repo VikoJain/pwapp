@@ -1144,7 +1144,7 @@ function startArbMonitor() {
   const interval = state.arbTestMode ? 10000 : 60000;
   const fullPct  = state.arbTestMode ? 90 : 98;
   const emptyPct = state.arbTestMode ? 80 : 2;
-  const rechargePct = state.arbTestMode ? 86 : 98;
+  const rechargePct = state.arbTestMode ? 80 : 98;
   state.arbMonitorTimer = setInterval(async () => {
     if (!state.arbEnabled) { clearInterval(state.arbMonitorTimer); return; }
     try {
