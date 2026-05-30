@@ -1115,12 +1115,12 @@ async function startArbCycle() {
   arbLog('=== Arbitrage cycle started ===');
   setArbPhase(1);
   try {
-    await readAndStoreTariff();
-    arbLog('Phase 1: Normal tariff stored — monitoring charge, waiting for 100%');
+    await setOperationMode('backup', 100);
+    arbLog('Phase 1: Backup mode 100% reserve — charging to full from grid');
   } catch(e) {
-    arbLog('Phase 1: Warning — could not store tariff: '+e.message);
+    arbLog('Phase 1 warning: '+e.message);
   }
-  toast('Arbitrage: Phase 1 — waiting for full charge');
+  toast('Arbitrage: Phase 1 — charging to full');
   state.arbStats = {kwh:0, rate:0, earned:0};
   localStorage.setItem('arb_stats', JSON.stringify(state.arbStats));
   startArbMonitor();
@@ -1168,34 +1168,34 @@ function startArbMonitor() {
 
 async function startArbPhase2(liveData) {
   setArbPhase(2);
-  arbLog('Phase 2: Setting export tariff + enabling export');
+  arbLog('Phase 2: Switching to autonomous + enabling export');
   const now = new Date();
   const idx = now.getHours()*2+(now.getMinutes()>=30?1:0);
   state.arbExportStartPct = 100;
   const rate = state.todayRates[idx] || state.tomorrowRates[idx] || 0;
   state.arbStats.rate = rate;
   try {
-    await setExportTariff();
+    await setOperationMode('autonomous', 20);
     await setExportMode(true);
-    arbLog('Export tariff active + export enabled at '+rate.toFixed(1)+'p/kWh');
+    arbLog('Autonomous + export enabled at '+rate.toFixed(1)+'p/kWh');
     toast('Arbitrage: Phase 2 — exporting to grid');
   } catch(e) { arbLog('Phase 2 error: '+e.message); }
 }
 
 async function startArbPhase3() {
   setArbPhase(3);
-  arbLog('Phase 3: Export off — restoring normal tariff to recharge');
+  arbLog('Phase 3: Export complete — disabling export');
   const kwhExported = 13.5;
   const earned = (kwhExported * state.arbStats.rate) / 100;
   state.arbStats.kwh = kwhExported;
   state.arbStats.earned = earned;
   localStorage.setItem('arb_stats', JSON.stringify(state.arbStats));
-  arbLog('Export complete — est. £'+earned.toFixed(2)+' earned ('+kwhExported+'kWh @ '+state.arbStats.rate.toFixed(1)+'p)');
+  arbLog('Est. £'+earned.toFixed(2)+' earned ('+kwhExported+'kWh @ '+state.arbStats.rate.toFixed(1)+'p)');
   try {
     await setExportMode(false);
-    await restoreNormalTariff();
-    arbLog('Normal tariff restored — Time-Based Control recharging from off-peak grid');
-    toast('Arbitrage: Phase 3 — recharging from grid');
+    await setOperationMode('autonomous', 20);
+    arbLog('Export off — battery will recharge at next off-peak window');
+    toast('Arbitrage: Phase 3 — export complete');
   } catch(e) { arbLog('Phase 3 error: '+e.message); }
 }
 
@@ -1208,11 +1208,11 @@ async function startArbPhase4() {
 async function startArbPhase5() {
   setArbPhase(0);
   if (state.arbMonitorTimer) { clearInterval(state.arbMonitorTimer); state.arbMonitorTimer = null; }
-  arbLog('Phase 5: Cycle complete — restoring normal rate schedule');
+  arbLog('Phase 5: Cycle complete — restoring normal operation');
   try {
     await setExportMode(false);
-    await restoreNormalTariff();
-    arbLog('=== Cycle complete — normal rate schedule restored ===');
+    await setOperationMode('autonomous', 20);
+    arbLog('=== Cycle complete — autonomous mode restored ===');
     toast('Arbitrage cycle complete! £'+state.arbStats.earned.toFixed(2)+' earned');
     scheduleArbitrage();
     renderArbUI();
