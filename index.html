@@ -1187,7 +1187,7 @@ async function startArbPhase2(liveData) {
   const rate = state.todayRates[idx] || state.tomorrowRates[idx] || 0;
   state.arbStats.rate = rate;
   try {
-    await setOperationMode('autonomous', 20);
+    await setOperationMode('autonomous', 0);
     await setExportMode(true);
     arbLog('Autonomous + export enabled at '+rate.toFixed(1)+'p/kWh');
     toast('Arbitrage: Phase 2 — exporting to grid');
@@ -1229,10 +1229,10 @@ async function startArbPhase5() {
   arbLog('Phase 5: Cycle complete — restoring normal operation');
   try {
     await setExportMode(false);
-    await setOperationMode('autonomous', 20);
+    await setOperationMode('autonomous', 0);
     const testLabel = state.arbTestMode ? ' (TEST RUN)' : '';
     state.arbTestMode = false;
-    arbLog('=== Cycle complete'+testLabel+' — autonomous mode restored ===');
+    arbLog('=== Cycle complete'+testLabel+' — autonomous mode restored, 0% reserve ===');
     toast('Arbitrage cycle complete! £'+state.arbStats.earned.toFixed(2)+' earned');
     scheduleArbitrage();
     renderArbUI();
