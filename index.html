@@ -394,10 +394,16 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       <div class="card" id="dev-test-card">
         <div class="card-title">Developer tests</div>
         <div class="dev-test-row">
-          <div class="dev-test-label">Quick test run — all phases</div>
-          <div class="dev-test-sub">Runs the full arbitrage cycle now with compressed thresholds (92%→85%→90%) and 10s polling. Watch the activity log above. Takes ~10–15 min.</div>
+          <div class="dev-test-label">Quick test run — all phases (1–5)</div>
+          <div class="dev-test-sub">Runs the full cycle with compressed thresholds and 10s polling. Watch the activity log above. Takes ~20–30 min.</div>
           <button class="dev-test-btn" style="background:#ff9500" onclick="devTestFullRun()">Run full cycle</button>
           <div class="dev-test-result" id="dt-full-result"></div>
+        </div>
+        <div class="dev-test-row">
+          <div class="dev-test-label">Quick test run — Phase 3 to 5 only</div>
+          <div class="dev-test-sub">Jumps straight into Phase 3 (backup 100% recharge to 86%), then Phase 4 (2 min standby), then Phase 5 (autonomous 20%). Battery should be below 86% to start.</div>
+          <button class="dev-test-btn" style="background:#ff9500" onclick="devTestPhase3to5()">Run Phase 3–5</button>
+          <div class="dev-test-result" id="dt-p3-result"></div>
         </div>
         <div class="dev-test-row">
           <div class="dev-test-label">Test 1 — Read battery level</div>
@@ -1190,7 +1196,7 @@ async function startArbPhase2(liveData) {
 
 async function startArbPhase3() {
   setArbPhase(3);
-  arbLog('Phase 3: Export complete — disabling export');
+  arbLog('Phase 3: Export complete — recharging to 100%');
   const kwhExported = 13.5;
   const earned = (kwhExported * state.arbStats.rate) / 100;
   state.arbStats.kwh = kwhExported;
@@ -1199,9 +1205,9 @@ async function startArbPhase3() {
   arbLog('Est. £'+earned.toFixed(2)+' earned ('+kwhExported+'kWh @ '+state.arbStats.rate.toFixed(1)+'p)');
   try {
     await setExportMode(false);
-    await setOperationMode('autonomous', 20);
-    arbLog('Export off — battery will recharge at next off-peak window');
-    toast('Arbitrage: Phase 3 — export complete');
+    await setOperationMode('backup', 100);
+    arbLog('Backup mode 100% — charging from grid back to full');
+    toast('Arbitrage: Phase 3 — recharging to 100%');
   } catch(e) { arbLog('Phase 3 error: '+e.message); }
 }
 
@@ -1261,6 +1267,16 @@ async function devTest1() {
     const gridStatus = gridW < 0 ? `exporting ${(Math.abs(gridW)/1000).toFixed(2)}kW` : gridW > 0 ? `importing ${(gridW/1000).toFixed(2)}kW` : 'grid 0kW';
     devDone(1, `Battery: ${pct}% · ${battStatus} · ${gridStatus} · Mode: ${mode}`, true);
   } catch(e) { devDone(1, 'Error: '+e.message, false); }
+}
+async function devTestPhase3to5() {
+  const el = document.getElementById('dt-p3-result');
+  if (!state.teslaToken || !state.energySiteId) { el.textContent = 'Error: connect Tesla first'; el.style.color='#ff3b30'; return; }
+  el.textContent = 'Phase 3 started — watch the activity log'; el.style.color = '#ff9500';
+  state.arbTestMode = true;
+  state.arbEnabled = true;
+  state.arbStats = {kwh:0, rate:0, earned:0};
+  await startArbPhase3();
+  startArbMonitor();
 }
 async function devTestFullRun() {
   const el = document.getElementById('dt-full-result');
