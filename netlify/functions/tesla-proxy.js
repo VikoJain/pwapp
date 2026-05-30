@@ -54,7 +54,8 @@ exports.handler = async (event) => {
       path.includes('/operation') ||
       path.includes('/backup') ||
       path.includes('/off_grid_vehicle_charging_reserve') ||
-      path.includes('/storm_mode')
+      path.includes('/storm_mode') ||
+      path.includes('/tariff_rate')
     );
 
     const headers = {
