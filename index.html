@@ -988,9 +988,14 @@ async function setExportTariff() {
   const tariff = state.normalTariff || JSON.parse(localStorage.getItem('arb_normal_tariff') || 'null');
   if (!tariff) throw new Error('Normal tariff not stored — enable arbitrage first to store it');
   const t = JSON.parse(JSON.stringify(tariff));
-  // Remove OFF_PEAK so the whole night becomes ON_PEAK → Powerwall discharges and exports
-  if (t.seasons?.Summer?.tou_periods) delete t.seasons.Summer.tou_periods.OFF_PEAK;
-  if (t.sell_tariff?.seasons?.Summer?.tou_periods) delete t.sell_tariff.seasons.Summer.tou_periods.OFF_PEAK;
+  // Replicate what works manually: ON_PEAK starts at midnight, OFF_PEAK shrinks to 23:30–00:00
+  // This makes midnight onwards ON_PEAK so the Powerwall discharges and exports
+  const exportPeriods = {
+    OFF_PEAK: [{ fromDayOfWeek: 0, toDayOfWeek: 6, fromHour: 23, fromMinute: 30, toHour: 0, toMinute: 0 }],
+    ON_PEAK:  [{ fromDayOfWeek: 0, toDayOfWeek: 6, fromHour: 0,  fromMinute: 0,  toHour: 23, toMinute: 30 }]
+  };
+  t.seasons.Summer.tou_periods = exportPeriods;
+  if (t.sell_tariff?.seasons?.Summer) t.sell_tariff.seasons.Summer.tou_periods = JSON.parse(JSON.stringify(exportPeriods));
   return teslaRequest(`/api/1/energy_sites/${state.energySiteId}/tariff_rate`, 'POST', t);
 }
 
