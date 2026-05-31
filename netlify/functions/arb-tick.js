@@ -125,11 +125,11 @@ exports.handler = async () => {
       log(state, 'Phase 1: Backup mode 100% — charging to full');
     }
 
-    // Phase 1 — wait for 100%
+    // Phase 1 — wait for 70%
     else if (state.phase === 1) {
       const live = await teslaGet(access, apiBase, `/api/1/energy_sites/${siteId}/live_status`);
       const pct = Math.round(live.response?.percentage_charged || 0);
-      if (pct >= 98) {
+      if (pct >= 70) {
         log(state, 'Phase 1 complete — battery at ' + pct + '%');
         state.phase = 2;
         await setMode(access, apiBase, siteId, 'autonomous', 0);
