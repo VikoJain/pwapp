@@ -112,7 +112,7 @@ exports.handler = async () => {
   }
 
   const { access, apiBase, energySiteId: siteId } = tokenData;
-  const now = new Date();
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/London' }));
   const h = now.getHours(), m = now.getMinutes();
 
   try {
