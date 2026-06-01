@@ -75,8 +75,11 @@ function log(state, msg) {
 }
 
 async function setMode(token, apiBase, siteId, mode, reserve) {
-  return teslaPost(token, apiBase, `/api/1/energy_sites/${siteId}/operation`, {
+  await teslaPost(token, apiBase, `/api/1/energy_sites/${siteId}/operation`, {
     default_real_mode: mode, backup_reserve_percent: reserve
+  });
+  await teslaPost(token, apiBase, `/api/1/energy_sites/${siteId}/backup`, {
+    backup_reserve_percent: reserve
   });
 }
 
