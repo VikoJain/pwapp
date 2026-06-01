@@ -774,10 +774,15 @@ async function setExportMode(enable) {
 
 async function setOperationMode(mode, reservePct) {
   if (!state.energySiteId) { toast('No Powerwall found.'); return; }
-  return teslaRequest(`/api/1/energy_sites/${state.energySiteId}/operation`, 'POST', {
+  await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/operation`, 'POST', {
     default_real_mode: mode,
-    backup_reserve_percent: reservePct !== undefined ? reservePct : 20
+    backup_reserve_percent: reservePct !== undefined ? reservePct : 0
   });
+  if (reservePct !== undefined) {
+    await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/backup`, 'POST', {
+      backup_reserve_percent: reservePct
+    });
+  }
 }
 
 async function startTimedExport(mins, btn) {
