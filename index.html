@@ -235,6 +235,15 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       </div>
 
       <div class="card">
+        <div class="card-title">Battery reserve</div>
+        <div class="btn-grid">
+          <button class="exp-btn" onclick="setReserve(70)">Set reserve 70%</button>
+          <button class="exp-btn" onclick="setReserve(100)">Set reserve 100%</button>
+        </div>
+        <div class="status-bar" id="reserve-bar">Sets the backup reserve level.</div>
+      </div>
+
+      <div class="card">
         <div class="card-title">Timed export</div>
         <div class="btn-grid">
           <button class="exp-btn" id="btn5" onclick="startTimedExport(5,this)">Export 5 min</button>
@@ -337,8 +346,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <div class="phase-row">
             <div class="phase-dot blue"></div>
             <div class="phase-info">
-              <div class="phase-name">Phase 1 — Charge to 100%</div>
-              <div class="phase-desc">11:30pm · Time-Based Control charges from grid</div>
+              <div class="phase-name">Phase 1 — Charge to 70%</div>
+              <div class="phase-desc">11:30pm · Reserve set to 70%, charges from grid</div>
             </div>
             <div class="phase-status waiting" id="ph1-status">Waiting</div>
           </div>
@@ -346,7 +355,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
             <div class="phase-dot green"></div>
             <div class="phase-info">
               <div class="phase-name">Phase 2 — Export to grid</div>
-              <div class="phase-desc">When 100% · Self-powered + export on · discharge to 0%</div>
+              <div class="phase-desc">When 70% · Reserve 0%, export on · discharge to 0%</div>
             </div>
             <div class="phase-status waiting" id="ph2-status">Waiting</div>
           </div>
@@ -354,7 +363,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
             <div class="phase-dot amber"></div>
             <div class="phase-info">
               <div class="phase-name">Phase 3 — Recharge to 100%</div>
-              <div class="phase-desc">When 0% · Export off · charge from grid</div>
+              <div class="phase-desc">When 0% · Export off · reserve 100%, charges from grid at full rate</div>
             </div>
             <div class="phase-status waiting" id="ph3-status">Waiting</div>
           </div>
@@ -370,7 +379,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
             <div class="phase-dot grey"></div>
             <div class="phase-info">
               <div class="phase-name">Phase 5 — Normal operation</div>
-              <div class="phase-desc">5:30am · Return to Time-Based Control</div>
+              <div class="phase-desc">5:30am · Autonomous mode, 0% reserve</div>
             </div>
             <div class="phase-status waiting" id="ph5-status">Waiting</div>
           </div>
@@ -395,78 +404,45 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         <div class="card-title">Developer tests</div>
         <div class="dev-test-row">
           <div class="dev-test-label">Quick test run — all phases (1–5)</div>
-          <div class="dev-test-sub">Runs the full cycle with compressed thresholds and 10s polling. Watch the activity log above. Takes ~20–30 min.</div>
+          <div class="dev-test-sub">Runs the full cycle now with compressed thresholds (75%→65%→70%) and 10s polling. Watch the activity log. Takes ~20 min.</div>
           <button class="dev-test-btn" style="background:#ff9500" onclick="devTestFullRun()">Run full cycle</button>
           <div class="dev-test-result" id="dt-full-result"></div>
         </div>
         <div class="dev-test-row">
           <div class="dev-test-label">Quick test run — Phase 3 to 5 only</div>
-          <div class="dev-test-sub">Jumps straight into Phase 3 (backup 100% recharge to 86%), then Phase 4 (2 min standby), then Phase 5 (autonomous 20%). Battery should be below 86% to start.</div>
+          <div class="dev-test-sub">Jumps into Phase 3 (reserve 100%, recharge to 70%), then Phase 4 (2 min standby), then Phase 5. Battery should be below 70%.</div>
           <button class="dev-test-btn" style="background:#ff9500" onclick="devTestPhase3to5()">Run Phase 3–5</button>
           <div class="dev-test-result" id="dt-p3-result"></div>
         </div>
         <div class="dev-test-row">
-          <div class="dev-test-label">Test 1 — Read battery level</div>
+          <div class="dev-test-label">Test 1 — Read battery status</div>
+          <div class="dev-test-sub">Shows battery %, charge/discharge rate, grid flow and mode.</div>
           <button class="dev-test-btn" id="dt1-btn" onclick="devTest1()">Run</button>
           <div class="dev-test-result" id="dt1-result"></div>
         </div>
         <div class="dev-test-row">
-          <div class="dev-test-label">Test 2 — Switch to Self-Powered mode</div>
-          <div class="dev-test-sub">Check Tesla app: does mode change to Self-Powered?</div>
+          <div class="dev-test-label">Test 2 — Simulate Phase 1 (reserve 70%)</div>
+          <div class="dev-test-sub">Sets autonomous mode, reserve 70%. Battery should charge from grid to 70%.</div>
           <button class="dev-test-btn" id="dt2-btn" onclick="devTest2()">Run</button>
           <div class="dev-test-result" id="dt2-result"></div>
         </div>
         <div class="dev-test-row">
-          <div class="dev-test-label">Test 3 — Enable export and verify after 5 seconds</div>
-          <div class="dev-test-sub">Enables export, waits 5s, then reads live status to confirm exporting.</div>
+          <div class="dev-test-label">Test 3 — Simulate Phase 2 (reserve 0% + export on)</div>
+          <div class="dev-test-sub">Sets reserve 0% and enables export. Battery should discharge and export to grid.</div>
           <button class="dev-test-btn" id="dt3-btn" onclick="devTest3()">Run</button>
           <div class="dev-test-result" id="dt3-result"></div>
         </div>
         <div class="dev-test-row">
-          <div class="dev-test-label">Test 2b — Force export mode</div>
-          <div class="dev-test-sub">Sets operation to export mode with 0% reserve — should push battery to grid regardless of home load.</div>
-          <button class="dev-test-btn" id="dt2b-btn" onclick="devTest2b()">Run</button>
-          <div class="dev-test-result" id="dt2b-result"></div>
-        </div>
-        <div class="dev-test-row">
-          <div class="dev-test-label">Test 2c — Read rate schedule</div>
-          <div class="dev-test-sub">Reads the current tariff rate JSON from Tesla — needed to build the export schedule.</div>
-          <button class="dev-test-btn" id="dt2c-btn" onclick="devTest2c()">Run</button>
-          <div class="dev-test-result" id="dt2c-result"></div>
-        </div>
-        <div class="dev-test-row">
-          <div class="dev-test-label">Test 2d — Set export tariff (removes OFF_PEAK)</div>
-          <div class="dev-test-sub">Removes the OFF_PEAK window so the Powerwall treats now as ON_PEAK and discharges. Check Tesla app — does the battery start exporting?</div>
-          <button class="dev-test-btn" id="dt2d-btn" onclick="devTest2d()">Run</button>
-          <div class="dev-test-result" id="dt2d-result"></div>
-        </div>
-        <div class="dev-test-row">
-          <div class="dev-test-label">Test 2e — Restore normal tariff (OFF_PEAK 23:30–05:30)</div>
-          <div class="dev-test-sub">Restores the original rate schedule. Run this after testing 2d.</div>
-          <button class="dev-test-btn" id="dt2e-btn" onclick="devTest2e()">Run</button>
-          <div class="dev-test-result" id="dt2e-result"></div>
-        </div>
-        <div class="dev-test-row">
-          <div class="dev-test-label">Test 4 — Disable export</div>
-          <div class="dev-test-sub">Check Tesla app: does Permission to Export toggle off?</div>
+          <div class="dev-test-label">Test 4 — Simulate Phase 3 (export off + reserve 100%)</div>
+          <div class="dev-test-sub">Disables export and sets reserve 100%. Battery should recharge from grid at full rate.</div>
           <button class="dev-test-btn" id="dt4-btn" onclick="devTest4()">Run</button>
           <div class="dev-test-result" id="dt4-result"></div>
         </div>
         <div class="dev-test-row">
-          <div class="dev-test-label">Test 5 — Force grid charge (100% reserve)</div>
-          <div class="dev-test-sub">Check Tesla app: does backup reserve jump to 100%?</div>
+          <div class="dev-test-label">Test 5 — Restore normal (reserve 0%)</div>
+          <div class="dev-test-sub">Disables export and sets reserve 0%. Returns to normal daily operation.</div>
           <button class="dev-test-btn" id="dt5-btn" onclick="devTest5()">Run</button>
           <div class="dev-test-result" id="dt5-result"></div>
-        </div>
-        <div class="dev-test-row">
-          <div class="dev-test-label">Test 6 — Return to normal standby (20% reserve)</div>
-          <button class="dev-test-btn" id="dt6-btn" onclick="devTest6()">Run</button>
-          <div class="dev-test-result" id="dt6-result"></div>
-        </div>
-        <div class="dev-test-row">
-          <div class="dev-test-label">Test 7 — Restore Time-Based Control</div>
-          <button class="dev-test-btn" id="dt7-btn" onclick="devTest7()">Run</button>
-          <div class="dev-test-result" id="dt7-result"></div>
         </div>
       </div>
     </div>
@@ -773,6 +749,18 @@ function updateHomeUI(live) {
   modeEl.textContent = modes[mode]||mode;
   modeEl.className = 'mode-badge '+(modeClass[mode]||'mode-self');
   return pct;
+}
+
+// ── Reserve controls ──────────────────────────────────────
+async function setReserve(pct) {
+  if (!state.teslaToken) { toast('Connect Tesla first.'); return; }
+  const bar = document.getElementById('reserve-bar');
+  bar.textContent = 'Setting reserve to '+pct+'%...';
+  try {
+    await setOperationMode('autonomous', pct);
+    bar.textContent = 'Reserve set to '+pct+'%';
+    toast('Reserve set to '+pct+'%');
+  } catch(e) { bar.textContent = 'Error: '+e.message; toast('Error: '+e.message); }
 }
 
 // ── Export controls ───────────────────────────────────────
@@ -1119,9 +1107,9 @@ function renderArbUI() {
 
   const phases = [
     {icon:'💤',name:'Arbitrage idle',sub:'Enable to start tonight\'s cycle at 11:30pm',cls:'idle'},
-    {icon:'⚡',name:'Phase 1 — Charging',sub:'Charging to 100% from grid',cls:'phase1'},
-    {icon:'📤',name:'Phase 2 — Exporting',sub:'Discharging to grid at Agile rate',cls:'phase2'},
-    {icon:'🔋',name:'Phase 3 — Recharging',sub:'Charging back to 100% ready for day',cls:'phase3'},
+    {icon:'⚡',name:'Phase 1 — Charging',sub:'Reserve at 70%, charging from grid',cls:'phase1'},
+    {icon:'📤',name:'Phase 2 — Exporting',sub:'Reserve 0%, exporting to grid',cls:'phase2'},
+    {icon:'🔋',name:'Phase 3 — Recharging',sub:'Reserve 100%, recharging from grid at full rate',cls:'phase3'},
     {icon:'😴',name:'Phase 4 — Standby',sub:'Fully charged, waiting for 5:30am',cls:'phase4'},
   ];
   const p = phases[state.arbPhase] || phases[0];
@@ -1189,8 +1177,8 @@ async function startArbCycle() {
   arbLog('=== Arbitrage cycle started ===');
   setArbPhase(1);
   try {
-    await setOperationMode('backup', 100);
-    arbLog('Phase 1: Backup mode 100% reserve — charging to full from grid');
+    await setOperationMode('autonomous', 70);
+    arbLog('Phase 1: Reserve set to 70% — charging from grid');
   } catch(e) {
     arbLog('Phase 1 warning: '+e.message);
   }
@@ -1203,9 +1191,9 @@ async function startArbCycle() {
 function startArbMonitor() {
   if (state.arbMonitorTimer) clearInterval(state.arbMonitorTimer);
   const interval = state.arbTestMode ? 10000 : 60000;
-  const fullPct  = state.arbTestMode ? 90 : 98;
-  const emptyPct = state.arbTestMode ? 80 : 2;
-  const rechargePct = state.arbTestMode ? 80 : 98;
+  const fullPct  = state.arbTestMode ? 75 : 70;
+  const emptyPct = state.arbTestMode ? 65 : 2;
+  const rechargePct = state.arbTestMode ? 70 : 98;
   state.arbMonitorTimer = setInterval(async () => {
     if (!state.arbEnabled) { clearInterval(state.arbMonitorTimer); return; }
     try {
@@ -1266,8 +1254,8 @@ async function startArbPhase3() {
   arbLog('Est. £'+earned.toFixed(2)+' earned ('+kwhExported+'kWh @ '+state.arbStats.rate.toFixed(1)+'p)');
   try {
     await setExportMode(false);
-    await setOperationMode('backup', 100);
-    arbLog('Backup mode 100% — charging from grid back to full');
+    await setOperationMode('autonomous', 100);
+    arbLog('Reserve set to 100% — recharging from grid at full rate');
     toast('Arbitrage: Phase 3 — recharging to 100%');
   } catch(e) { arbLog('Phase 3 error: '+e.message); }
 }
@@ -1348,107 +1336,43 @@ async function devTestFullRun() {
   state.arbEnabled = true;
   await startArbCycle();
 }
-async function devTest2d() {
-  devSetRunning('2d');
-  try {
-    const tariff = state.normalTariff || JSON.parse(localStorage.getItem('arb_normal_tariff') || 'null');
-    if (!tariff) { devDone('2d', 'Error: tariff not stored — run 2c first', false); return; }
-    const exportPeriods = {
-      OFF_PEAK: [{ fromDayOfWeek: 0, toDayOfWeek: 6, fromHour: 23, fromMinute: 30, toHour: 0, toMinute: 0 }],
-      ON_PEAK:  [{ fromDayOfWeek: 0, toDayOfWeek: 6, fromHour: 0,  fromMinute: 0,  toHour: 23, toMinute: 30 }]
-    };
-    const payload = buildTariffPayload(tariff, exportPeriods);
-    const resp = await fetch('/.netlify/functions/tesla-proxy', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: TESLA_API+`/api/1/energy_sites/${state.energySiteId}/tariff_rate`, method: 'POST', body: payload, token: state.teslaToken })
-    });
-    const text = await resp.text();
-    devDone('2d', 'HTTP '+resp.status+': '+text.substring(0, 400), resp.ok);
-  } catch(e) { devDone('2d', e.constructor.name+': '+e.message, false); }
-}
-async function devTest2e() {
-  devSetRunning('2e');
-  try {
-    const r = await restoreNormalTariff();
-    devDone('2e', 'Normal tariff restored — OFF_PEAK 23:30–05:30 active again.', true);
-  } catch(e) { devDone('2e', 'Error: '+e.message, false); }
-}
-async function devTest2c() {
-  devSetRunning('2c');
-  try {
-    const tariff = await readAndStoreTariff();
-    // Also probe the time_of_use_settings endpoint
-    const touResp = await fetch('/.netlify/functions/tesla-proxy', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: TESLA_API+`/api/1/energy_sites/${state.energySiteId}/time_of_use_settings`, method: 'GET', body: null, token: state.teslaToken })
-    });
-    const touText = await touResp.text();
-    const touPreview = touText.startsWith('<') ? 'time_of_use_settings GET: 404 (not available)' : 'time_of_use_settings GET: '+touText.substring(0, 100);
-    devDone('2c', 'Tariff stored. OFF_PEAK: '+JSON.stringify(tariff.seasons?.Summer?.tou_periods?.OFF_PEAK)+' | '+touPreview, true);
-  } catch(e) { devDone('2c', 'Error: '+e.message, false); }
-}
-async function devTest2b() {
-  devSetRunning('2b');
-  try {
-    const r = await setOperationMode('export', 0);
-    document.getElementById('dt2b-result').textContent = 'Export mode set — checking in 30s...';
-    document.getElementById('dt2b-result').style.color = '#8e8e93';
-    await new Promise(res => setTimeout(res, 30000));
-    const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
-    const battW = data.response.battery_power || 0;
-    const gridW = data.response.grid_power || 0;
-    const exporting = gridW < 0;
-    const msg = `Battery: ${battW > 0 ? 'discharging ' + (battW/1000).toFixed(2) + 'kW' : 'idle'} · Grid: ${exporting ? 'exporting ' + (Math.abs(gridW)/1000).toFixed(2) + 'kW' : gridW + 'W'}`;
-    devDone('2b', msg, exporting);
-  } catch(e) { devDone('2b', 'Error: '+e.message, false); }
-}
 async function devTest2() {
   devSetRunning(2);
   try {
-    const r = await setOperationMode('self_consumption', 0);
-    devDone(2, JSON.stringify(r), true);
+    const r = await setOperationMode('autonomous', 70);
+    devDone(2, 'Phase 1: Reserve set to 70% — '+JSON.stringify(r?.response?.Message || r), true);
   } catch(e) { devDone(2, 'Error: '+e.message, false); }
 }
 async function devTest3() {
   devSetRunning(3);
   try {
+    await setOperationMode('autonomous', 0);
     await setExportMode(true);
-    document.getElementById('dt3-result').textContent = 'Export enabled — verifying in 5s...';
+    document.getElementById('dt3-result').textContent = 'Phase 2: Reserve 0% + export on — verifying in 10s...';
     document.getElementById('dt3-result').style.color = '#8e8e93';
-    await new Promise(res => setTimeout(res, 5000));
+    await new Promise(res => setTimeout(res, 10000));
     const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
     const gridW = data.response.grid_power || 0;
+    const battW = data.response.battery_power || 0;
     const exporting = gridW < 0;
-    devDone(3, exporting ? `Confirmed exporting — ${(Math.abs(gridW)/1000).toFixed(2)} kW to grid` : `Export enabled but grid_power is ${(gridW/1000).toFixed(2)} kW (may need a moment)`, exporting);
+    devDone(3, `Battery: ${battW > 0 ? 'discharging '+(battW/1000).toFixed(2)+'kW' : 'idle'} · Grid: ${exporting ? 'exporting '+(Math.abs(gridW)/1000).toFixed(2)+'kW' : (gridW/1000).toFixed(2)+'kW'}`, exporting);
   } catch(e) { devDone(3, 'Error: '+e.message, false); }
 }
 async function devTest4() {
   devSetRunning(4);
   try {
-    const r = await setExportMode(false);
-    devDone(4, JSON.stringify(r), true);
+    await setExportMode(false);
+    const r = await setOperationMode('autonomous', 100);
+    devDone(4, 'Phase 3: Export off + reserve 100% — '+JSON.stringify(r?.response?.Message || r), true);
   } catch(e) { devDone(4, 'Error: '+e.message, false); }
 }
 async function devTest5() {
   devSetRunning(5);
   try {
-    const r = await setOperationMode('self_consumption', 100);
-    devDone(5, JSON.stringify(r), true);
+    await setExportMode(false);
+    const r = await setOperationMode('autonomous', 0);
+    devDone(5, 'Normal restored: export off, reserve 0% — '+JSON.stringify(r?.response?.Message || r), true);
   } catch(e) { devDone(5, 'Error: '+e.message, false); }
-}
-async function devTest6() {
-  devSetRunning(6);
-  try {
-    const r = await setOperationMode('self_consumption', 20);
-    devDone(6, JSON.stringify(r), true);
-  } catch(e) { devDone(6, 'Error: '+e.message, false); }
-}
-async function devTest7() {
-  devSetRunning(7);
-  try {
-    const r = await setOperationMode('autonomous', 20);
-    devDone(7, JSON.stringify(r), true);
-  } catch(e) { devDone(7, 'Error: '+e.message, false); }
 }
 
 // ── Health ────────────────────────────────────────────────
