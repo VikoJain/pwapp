@@ -121,8 +121,8 @@ exports.handler = async () => {
       state.phase = 1;
       state.stats = { kwh: 0, rate: 0, earned: 0 };
       log(state, '=== Arbitrage cycle started ===');
-      await setMode(access, apiBase, siteId, 'backup', 100);
-      log(state, 'Phase 1: Backup mode 100% — charging to full');
+      await setMode(access, apiBase, siteId, 'autonomous', 70);
+      log(state, 'Phase 1: Reserve set to 70% — charging from grid');
     }
 
     // Phase 1 — wait for 70%
@@ -149,8 +149,8 @@ exports.handler = async () => {
         log(state, 'Est. £' + earned.toFixed(2) + ' earned');
         state.phase = 3;
         await setExport(access, apiBase, siteId, false);
-        await setMode(access, apiBase, siteId, 'backup', 100);
-        log(state, 'Phase 3: Backup mode 100% — recharging to full');
+        await setMode(access, apiBase, siteId, 'autonomous', 100);
+        log(state, 'Phase 3: Reserve set to 100% — recharging from grid');
       }
     }
 
