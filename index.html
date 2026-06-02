@@ -358,8 +358,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <div class="phase-row">
             <div class="phase-dot blue"></div>
             <div class="phase-info">
-              <div class="phase-name">Phase 1 — Charge to 70%</div>
-              <div class="phase-desc">12:35am · Reserve set to 70%, charges from grid</div>
+              <div class="phase-name">Phase 1 — Charge to 50%</div>
+              <div class="phase-desc">12:35am · Reserve set to 50%, charges from grid</div>
             </div>
             <div class="phase-status waiting" id="ph1-status">Waiting</div>
           </div>
@@ -367,7 +367,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
             <div class="phase-dot green"></div>
             <div class="phase-info">
               <div class="phase-name">Phase 2 — Export to grid</div>
-              <div class="phase-desc">When 70% · Reserve 0%, export on · discharge to 0%</div>
+              <div class="phase-desc">When 50% · Reserve 0%, export on · discharge to 0%</div>
             </div>
             <div class="phase-status waiting" id="ph2-status">Waiting</div>
           </div>
@@ -433,8 +433,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <div class="dev-test-result" id="dt1-result"></div>
         </div>
         <div class="dev-test-row">
-          <div class="dev-test-label">Test 2 — Simulate Phase 1 (reserve 70%)</div>
-          <div class="dev-test-sub">Sets autonomous mode, reserve 70%. Battery should charge from grid to 70%.</div>
+          <div class="dev-test-label">Test 2 — Simulate Phase 1 (reserve 50%)</div>
+          <div class="dev-test-sub">Sets autonomous mode, reserve 50%. Battery should charge from grid to 50%.</div>
           <button class="dev-test-btn" id="dt2-btn" onclick="devTest2()">Run</button>
           <div class="dev-test-result" id="dt2-result"></div>
         </div>
@@ -1130,7 +1130,7 @@ function renderArbUI() {
 
   const phases = [
     {icon:'💤',name:'Arbitrage idle',sub:'Enable to start tonight\'s cycle at 11:30pm',cls:'idle'},
-    {icon:'⚡',name:'Phase 1 — Charging',sub:'Reserve at 70%, charging from grid',cls:'phase1'},
+    {icon:'⚡',name:'Phase 1 — Charging',sub:'Reserve at 50%, charging from grid',cls:'phase1'},
     {icon:'📤',name:'Phase 2 — Exporting',sub:'Reserve 0%, exporting to grid',cls:'phase2'},
     {icon:'🔋',name:'Phase 3 — Recharging',sub:'Reserve 100%, recharging from grid at full rate',cls:'phase3'},
     {icon:'😴',name:'Phase 4 — Standby',sub:'Fully charged, waiting for 5:30am',cls:'phase4'},
@@ -1200,8 +1200,8 @@ async function startArbCycle() {
   arbLog('=== Arbitrage cycle started ===');
   setArbPhase(1);
   try {
-    await setOperationMode('autonomous', 70);
-    arbLog('Phase 1: Reserve set to 70% — charging from grid');
+    await setOperationMode('autonomous', 50);
+    arbLog('Phase 1: Reserve set to 50% — charging from grid');
   } catch(e) {
     arbLog('Phase 1 warning: '+e.message);
   }
@@ -1214,7 +1214,7 @@ async function startArbCycle() {
 function startArbMonitor() {
   if (state.arbMonitorTimer) clearInterval(state.arbMonitorTimer);
   const interval = state.arbTestMode ? 10000 : 60000;
-  const fullPct  = state.arbTestMode ? 75 : 70;
+  const fullPct  = state.arbTestMode ? 75 : 50;
   const emptyPct = state.arbTestMode ? 65 : 2;
   const rechargePct = state.arbTestMode ? 70 : 98;
   state.arbMonitorTimer = setInterval(async () => {
@@ -1362,8 +1362,8 @@ async function devTestFullRun() {
 async function devTest2() {
   devSetRunning(2);
   try {
-    const r = await setOperationMode('autonomous', 70);
-    devDone(2, 'Phase 1: Reserve set to 70% — '+JSON.stringify(r?.response?.Message || r), true);
+    const r = await setOperationMode('autonomous', 50);
+    devDone(2, 'Phase 1: Reserve set to 50% — '+JSON.stringify(r?.response?.Message || r), true);
   } catch(e) { devDone(2, 'Error: '+e.message, false); }
 }
 async function devTest3() {
