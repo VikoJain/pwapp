@@ -341,12 +341,12 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         <div class="arb-hero">
           <div class="arb-status-circle idle" id="arb-circle">💤</div>
           <div class="arb-phase-name" id="arb-phase-name">Arbitrage idle</div>
-          <div class="arb-phase-sub" id="arb-phase-sub">Enable to start tonight's cycle at 11:30pm</div>
+          <div class="arb-phase-sub" id="arb-phase-sub">Enable to start tonight's cycle at 12:35am</div>
         </div>
         <div class="arb-toggle-row">
           <div>
             <div class="arb-toggle-lbl">Overnight arbitrage</div>
-            <div class="arb-toggle-sub">Runs every night 11:30pm – 5:30am</div>
+            <div class="arb-toggle-sub">Runs every night 12:35am – 5:30am</div>
           </div>
           <button class="big-toggle" id="arb-main-toggle" onclick="toggleArbitrage()"></button>
         </div>
@@ -359,7 +359,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
             <div class="phase-dot blue"></div>
             <div class="phase-info">
               <div class="phase-name">Phase 1 — Charge to 70%</div>
-              <div class="phase-desc">11:30pm · Reserve set to 70%, charges from grid</div>
+              <div class="phase-desc">12:35am · Reserve set to 70%, charges from grid</div>
             </div>
             <div class="phase-status waiting" id="ph1-status">Waiting</div>
           </div>
@@ -1169,8 +1169,8 @@ async function toggleArbitrage() {
   state.arbEnabled = !state.arbEnabled;
   localStorage.setItem('arb_enabled', state.arbEnabled);
   if (state.arbEnabled) {
-    arbLog('Arbitrage enabled — server-side, starts at 23:30');
-    toast('Arbitrage enabled — server will run it at 23:30');
+    arbLog('Arbitrage enabled — server-side, starts at 00:35');
+    toast('Arbitrage enabled — server will run it at 00:35');
     await toggleServerArbitrage(true);
   } else {
     arbLog('Arbitrage disabled');
@@ -1187,8 +1187,8 @@ function scheduleArbitrage() {
   if (!state.arbEnabled) return;
   const now = new Date();
   const startTime = new Date(now);
-  startTime.setHours(23, 30, 0, 0);
-  // If it's already past 11:30pm, schedule for tomorrow
+  startTime.setHours(0, 35, 0, 0);
+  // If it's already past 12:35am, schedule for tomorrow
   if (now >= startTime) startTime.setDate(startTime.getDate()+1);
   const msUntilStart = startTime - now;
   arbLog('Next cycle scheduled for '+startTime.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}));
