@@ -811,11 +811,12 @@ async function startTimedExport(mins, btn) {
     if (state.exportTimer) clearInterval(state.exportTimer);
     if (state.activeExportBtn) state.activeExportBtn.classList.remove('active');
     state.activeExportBtn = btn; btn.classList.add('active');
-    state.exportCountdown = mins*60;
+    // Wall-clock end time — survives screen lock, tab backgrounding and page reload
+    state.exportEndTime = Date.now() + mins * 60 * 1000;
+    localStorage.setItem('export_end_time', state.exportEndTime);
     updateTimerBar();
     state.exportTimer = setInterval(async () => {
-      state.exportCountdown--;
-      if (state.exportCountdown <= 0) { await stopExport(); return; }
+      if (Date.now() >= state.exportEndTime) { await stopExport(); return; }
       updateTimerBar();
     }, 1000);
     toast('Exporting for '+mins+' minutes');
@@ -826,11 +827,15 @@ async function startTimedExport(mins, btn) {
 async function stopExport() {
   if (state.exportTimer) { clearInterval(state.exportTimer); state.exportTimer = null; }
   if (state.activeExportBtn) { state.activeExportBtn.classList.remove('active'); state.activeExportBtn = null; }
-  // Also stop pct monitor if running
   if (state.pctMonitorInterval) { clearInterval(state.pctMonitorInterval); state.pctMonitorInterval = null; }
+  // Clear persisted export state so a page reload doesn't resume
+  state.exportEndTime = null;
+  localStorage.removeItem('export_end_time');
+  localStorage.removeItem('pct_export_target');
   document.getElementById('timer-bar').textContent = 'Export stopped.';
   document.getElementById('pct-bar').textContent = 'Enter a target battery % below current level.';
   document.getElementById('pct-go-btn').textContent = 'Export';
+  document.getElementById('pct-go-btn').disabled = false;
   document.getElementById('pct-go-btn').onclick = startPctExport;
   if (state.teslaToken) {
     try {
@@ -842,7 +847,9 @@ async function stopExport() {
 }
 
 function updateTimerBar() {
-  const m = Math.floor(state.exportCountdown/60), s = state.exportCountdown%60;
+  if (!state.exportEndTime) return;
+  const remaining = Math.max(0, state.exportEndTime - Date.now());
+  const m = Math.floor(remaining / 60000), s = Math.floor((remaining % 60000) / 1000);
   document.getElementById('timer-bar').innerHTML = 'Exporting — stops in <span class="hl">'+m+':'+String(s).padStart(2,'0')+'</span>';
 }
 
@@ -854,23 +861,36 @@ async function startPctExport() {
   const val = parseInt(document.getElementById('pct-target').value);
   if (isNaN(val)||val<0||val>95) { document.getElementById('pct-bar').textContent = 'Enter a valid target between 0 and 95%.'; return; }
   if (!state.teslaToken) { toast('Connect Tesla first.'); return; }
-  // Get current battery level
-  let pctNow = parseInt(document.getElementById('bat-pct').textContent) || 100;
+  // Fetch a fresh reading so the starting % is accurate, not a stale/interpolated value
+  const goBtn = document.getElementById('pct-go-btn');
+  goBtn.disabled = true;
+  document.getElementById('pct-bar').textContent = 'Checking current battery level…';
+  let pctNow;
+  try {
+    const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
+    pctNow = Math.round(data.response.percentage_charged || 0);
+    updateHomeUI(data.response);
+  } catch(e) {
+    pctNow = parseInt(document.getElementById('bat-pct').textContent) || 100;
+  }
+  goBtn.disabled = false;
   if (val >= pctNow) { document.getElementById('pct-bar').textContent = 'Target must be below current level ('+pctNow+'%).'; return; }
   try {
     await setExportMode(true);
+    // Persist the target so a page reload can resume monitoring
+    localStorage.setItem('pct_export_target', val);
     document.getElementById('pct-bar').innerHTML = 'Exporting — will stop at <span class="hl">'+val+'%</span>. Battery at '+pctNow+'% now.';
-    // Change button to Stop
-    document.getElementById('pct-go-btn').textContent = 'Stop';
-    document.getElementById('pct-go-btn').onclick = stopExport;
+    goBtn.textContent = 'Stop';
+    goBtn.onclick = stopExport;
     toast('Export to '+val+'% started');
-    // Start monitoring with reliable polling
     monitorPctExport(val);
-  } catch(e) { toast('Error: '+e.message); }
+  } catch(e) {
+    document.getElementById('pct-bar').textContent = 'Error: '+e.message;
+    toast('Error: '+e.message);
+  }
 }
 
 function monitorPctExport(target) {
-  // Clear any existing monitor
   if (state.pctMonitorInterval) clearInterval(state.pctMonitorInterval);
   state.pctMonitorInterval = setInterval(async () => {
     try {
@@ -880,19 +900,19 @@ function monitorPctExport(target) {
       if (pct <= target) {
         clearInterval(state.pctMonitorInterval);
         state.pctMonitorInterval = null;
-        // Stop export
+        localStorage.removeItem('pct_export_target');
         await setExportMode(false);
         document.getElementById('pct-bar').innerHTML = 'Export complete — stopped at <span class="hl">'+pct+'%</span>.';
         document.getElementById('pct-go-btn').textContent = 'Export';
+        document.getElementById('pct-go-btn').disabled = false;
         document.getElementById('pct-go-btn').onclick = startPctExport;
         toast('Target reached — export stopped at '+pct+'%');
         setTimeout(refreshData, 2000);
       }
     } catch(e) {
-      clearInterval(state.pctMonitorInterval);
-      state.pctMonitorInterval = null;
+      // Do not stop monitoring on a transient API error — just skip this tick and retry
     }
-  }, 30000); // Poll every 30 seconds
+  }, 15000); // Poll every 15 seconds
 }
 
 // ── Tariff / Octopus ──────────────────────────────────────
@@ -1503,6 +1523,38 @@ function init() {
 
   // Restore arbitrage if it was enabled
   if (state.arbEnabled && state.arbPhase === 0) scheduleArbitrage();
+
+  // Restore timed export if it was active before the page reload
+  if (state.teslaToken) {
+    const savedEndTime = parseInt(localStorage.getItem('export_end_time') || '0');
+    if (savedEndTime) {
+      if (savedEndTime > Date.now()) {
+        // Export is still meant to be running — resume the countdown
+        state.exportEndTime = savedEndTime;
+        updateTimerBar();
+        state.exportTimer = setInterval(async () => {
+          if (Date.now() >= state.exportEndTime) { await stopExport(); return; }
+          updateTimerBar();
+        }, 1000);
+      } else {
+        // End time already passed while the app was closed — stop export now
+        localStorage.removeItem('export_end_time');
+        setExportMode(false).catch(() => {});
+        document.getElementById('timer-bar').textContent = 'Timed export ended while app was closed — export stopped.';
+      }
+    }
+
+    // Restore pct export monitor if it was active before the page reload
+    if (state.energySiteId) {
+      const savedPctTarget = parseInt(localStorage.getItem('pct_export_target') || '0');
+      if (savedPctTarget) {
+        document.getElementById('pct-bar').innerHTML = 'Monitoring resumed — stopping export at <span class="hl">'+savedPctTarget+'%</span>.';
+        document.getElementById('pct-go-btn').textContent = 'Stop';
+        document.getElementById('pct-go-btn').onclick = stopExport;
+        monitorPctExport(savedPctTarget);
+      }
+    }
+  }
 }
 
 // ── 24h SOE chart ─────────────────────────────────────────
@@ -1582,6 +1634,15 @@ async function autoRefreshLive() {
 
 init();
 pollServerStatus();
+
+// When the tab/app comes back to the foreground, immediately check whether
+// a timed export should have ended while the screen was locked
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (state.exportTimer && state.exportEndTime && Date.now() >= state.exportEndTime) {
+    stopExport();
+  }
+});
 </script>
 </body>
 </html>
