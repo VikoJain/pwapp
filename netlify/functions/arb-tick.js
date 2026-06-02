@@ -124,15 +124,15 @@ exports.handler = async () => {
       state.phase = 1;
       state.stats = { kwh: 0, rate: 0, earned: 0 };
       log(state, '=== Arbitrage cycle started ===');
-      await setMode(access, apiBase, siteId, 'autonomous', 70);
-      log(state, 'Phase 1: Reserve set to 70% — charging from grid');
+      await setMode(access, apiBase, siteId, 'autonomous', 50);
+      log(state, 'Phase 1: Reserve set to 50% — charging from grid');
     }
 
-    // Phase 1 — wait for 70%
+    // Phase 1 — wait for 50%
     else if (state.phase === 1) {
       const live = await teslaGet(access, apiBase, `/api/1/energy_sites/${siteId}/live_status`);
       const pct = Math.round(live.response?.percentage_charged || 0);
-      if (pct >= 70) {
+      if (pct >= 50) {
         log(state, 'Phase 1 complete — battery at ' + pct + '%');
         state.phase = 2;
         await setMode(access, apiBase, siteId, 'autonomous', 0);
