@@ -3,6 +3,12 @@ const crypto = require('crypto');
 
 const DEFAULT_STATE = { phase: 0, enabled: false, log: [], stats: { kwh: 0, rate: 0, earned: 0 } };
 
+const DEFAULT_SETTINGS = {
+  chargeTargetPct: 50,
+  startHour: 23, startMinute: 30,
+  endHour: 5, endMinute: 30
+};
+
 function makeRequest(options, postData) {
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
@@ -116,6 +122,8 @@ async function getOctopusRate(store) {
   return 0;
 }
 
+function fmt2(n) { return String(n).padStart(2, '0'); }
+
 exports.handler = async () => {
   const { getStore } = require('@netlify/blobs');
   const store = getStore({ name: 'arb', siteID: process.env.SITE_ID, token: process.env.NETLIFY_API_TOKEN });
@@ -139,29 +147,33 @@ exports.handler = async () => {
     } catch (e) { log(state, 'Token refresh error: ' + e.message); }
   }
 
+  // Load user-defined strategy settings, fall back to defaults if not set
+  const rawSettings = await store.get('arb_settings');
+  const s = rawSettings ? { ...DEFAULT_SETTINGS, ...JSON.parse(rawSettings) } : DEFAULT_SETTINGS;
+  const { chargeTargetPct, startHour, startMinute, endHour, endMinute } = s;
+
   const { access, apiBase, energySiteId: siteId } = tokenData;
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/London' }));
   const h = now.getHours(), m = now.getMinutes();
 
   try {
-    // Phase 0 — wait for 23:30 to start cycle
-    if (state.phase === 0 && state.enabled && h === 23 && m >= 30) {
+    // Phase 0 — wait for configured start time
+    if (state.phase === 0 && state.enabled && h === startHour && m >= startMinute) {
       state.phase = 1;
       state.stats = { kwh: 0, rate: 0, earned: 0, phase2StartPct: 0 };
       log(state, '=== Arbitrage cycle started ===');
-      await setMode(access, apiBase, siteId, 'autonomous', 50);
-      log(state, 'Phase 1: Reserve set to 50% — charging from grid');
+      await setMode(access, apiBase, siteId, 'autonomous', chargeTargetPct);
+      log(state, 'Phase 1: Reserve set to ' + chargeTargetPct + '% — charging from grid');
     }
 
-    // Phase 1 — charge to 50%; log progress every 10 minutes
+    // Phase 1 — charge to target %; log progress every 10 minutes
     else if (state.phase === 1) {
       const live = await teslaGet(access, apiBase, `/api/1/energy_sites/${siteId}/live_status`);
       const pct = Math.round(live.response?.percentage_charged || 0);
       if (m % 10 === 0) log(state, 'Phase 1 charging — battery at ' + pct + '%');
-      if (pct >= 50) {
+      if (pct >= chargeTargetPct) {
         log(state, 'Phase 1 complete — battery reached ' + pct + '%');
         state.phase = 2;
-        // Fetch live Octopus rate so earnings can be calculated accurately
         const rate = await getOctopusRate(store);
         state.stats.rate = rate;
         state.stats.phase2StartPct = pct;
@@ -178,8 +190,7 @@ exports.handler = async () => {
       if (m % 10 === 0) log(state, 'Phase 2 exporting — battery at ' + pct + '%');
       if (pct <= 2) {
         log(state, 'Phase 2 complete — battery at ' + pct + '%');
-        // Calculate actual kWh exported from the start % rather than assuming full battery
-        const startPct = state.stats.phase2StartPct || 50;
+        const startPct = state.stats.phase2StartPct || chargeTargetPct;
         const kwhExported = parseFloat(((startPct - pct) / 100 * 13.5).toFixed(2));
         const earned = parseFloat((kwhExported * (state.stats.rate || 0) / 100).toFixed(2));
         state.stats.kwh = kwhExported;
@@ -200,21 +211,21 @@ exports.handler = async () => {
       if (pct >= 98) {
         log(state, 'Phase 3 complete — battery at ' + pct + '%');
         state.phase = 4;
-        log(state, 'Phase 4: Fully charged — standby until 5:30am');
+        log(state, 'Phase 4: Fully charged — standby until ' + fmt2(endHour) + ':' + fmt2(endMinute));
       }
     }
 
-    // Phase 4 — wait for 5:30am
-    else if (state.phase === 4 && h === 5 && m >= 30) {
+    // Phase 4 — wait for configured end time
+    else if (state.phase === 4 && h === endHour && m >= endMinute) {
       state.phase = 0;
       await setExport(access, apiBase, siteId, false);
       await setMode(access, apiBase, siteId, 'autonomous', 0);
       log(state, '=== Cycle complete — autonomous mode restored, 0% reserve ===');
     }
 
-    // Safety fallback — if still running after 6am, restore normal operation
-    else if (state.phase > 0 && h >= 6) {
-      log(state, 'Safety fallback at ' + String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ' — restoring normal mode');
+    // Safety fallback — if still running an hour after the end time, restore normal operation
+    else if (state.phase > 0 && h >= endHour + 1) {
+      log(state, 'Safety fallback at ' + fmt2(h) + ':' + fmt2(m) + ' — restoring normal mode');
       state.phase = 0;
       await setExport(access, apiBase, siteId, false);
       await setMode(access, apiBase, siteId, 'autonomous', 0);
