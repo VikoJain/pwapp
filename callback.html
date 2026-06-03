@@ -20,27 +20,60 @@
   <p>Please wait while we complete your login.</p>
 </div>
 <script>
-  // Grab the full query string Tesla sent back
+(async function () {
   const params = new URLSearchParams(window.location.search);
   const code = params.get('code');
-  const state = params.get('state');
   const error = params.get('error');
 
   if (error) {
+    document.querySelector('.spinner').style.display = 'none';
     document.querySelector('h2').textContent = 'Login failed';
     document.querySelector('p').textContent = 'Tesla returned an error: ' + error;
+    return;
+  }
+
+  if (!code) {
     document.querySelector('.spinner').style.display = 'none';
-  } else if (code) {
-    // Store the code and state so index.html can pick them up
-    sessionStorage.setItem('tesla_oauth_code', code);
-    sessionStorage.setItem('tesla_oauth_state', state || '');
-    // Redirect to the main app
-    window.location.replace('/');
-  } else {
     document.querySelector('h2').textContent = 'Something went wrong';
     document.querySelector('p').textContent = 'No authorisation code received from Tesla.';
-    document.querySelector('.spinner').style.display = 'none';
+    return;
   }
+
+  // Retrieve the device ID that was set before the login redirect
+  const deviceId = localStorage.getItem('device_id');
+  if (!deviceId) {
+    document.querySelector('.spinner').style.display = 'none';
+    document.querySelector('h2').textContent = 'Session error';
+    document.querySelector('p').textContent = 'Device ID missing — please try connecting again.';
+    return;
+  }
+
+  try {
+    // Exchange the code server-side so the client secret is never exposed
+    const resp = await fetch('/.netlify/functions/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'exchange', code, device_id: deviceId })
+    });
+    const data = await resp.json();
+
+    if (data.access_token) {
+      // Pass the token back to the main app via sessionStorage
+      sessionStorage.setItem('tesla_auth_result', JSON.stringify({
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        expiry: data.expiry
+      }));
+      window.location.replace('/');
+    } else {
+      throw new Error(data.error || 'Token exchange failed');
+    }
+  } catch (e) {
+    document.querySelector('.spinner').style.display = 'none';
+    document.querySelector('h2').textContent = 'Login failed';
+    document.querySelector('p').textContent = e.message;
+  }
+})();
 </script>
 </body>
 </html>
