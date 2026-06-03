@@ -1,2 +1,72 @@
-  - Big Fat Star
-  - Vikramjains@gmail.com
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — Powerwall Manager</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f7;color:#1d1d1f;font-size:16px;line-height:1.6}
+  .wrap{max-width:680px;margin:0 auto;padding:24px 16px 60px}
+  .back{display:inline-flex;align-items:center;gap:6px;color:#007aff;font-size:14px;font-weight:500;text-decoration:none;margin-bottom:24px}
+  .back svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  h1{font-size:26px;font-weight:700;margin-bottom:6px}
+  .updated{font-size:13px;color:#8e8e93;margin-bottom:32px}
+  h2{font-size:16px;font-weight:600;margin:28px 0 8px}
+  p{font-size:15px;color:#3c3c43;margin-bottom:12px}
+  ul{font-size:15px;color:#3c3c43;padding-left:20px;margin-bottom:12px}
+  ul li{margin-bottom:6px}
+  a{color:#007aff;text-decoration:none}
+  .card{background:#fff;border-radius:16px;padding:20px;border:1px solid #e5e5ea;margin-bottom:32px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">
+    <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+    Back to app
+  </a>
+  <h1>Privacy Policy</h1>
+  <div class="updated">Last updated: June 2026</div>
+
+  <div class="card">
+
+    <h2>Who we are</h2>
+    <p>Powerwall Manager is operated by [YOUR NAME / COMPANY], based in the United Kingdom. If you have any questions about this policy, contact us at <a href="mailto:[YOUR EMAIL]">[YOUR EMAIL]</a>.</p>
+
+    <h2>What data we collect</h2>
+    <ul>
+      <li>Your Tesla authentication tokens (access token and refresh token), used solely to communicate with the Tesla Fleet API on your behalf</li>
+      <li>Your Tesla energy site ID, used to identify your Powerwall</li>
+      <li>Your Octopus Energy API key, account number, and tariff code, used solely to retrieve live Agile export rates</li>
+      <li>Battery state and power flow data retrieved from the Tesla Fleet API during normal app operation</li>
+      <li>App preferences such as arbitrage schedule settings and reserve levels</li>
+    </ul>
+
+    <h2>What we do not collect</h2>
+    <ul>
+      <li>Your Tesla account email or password — authentication is handled entirely by Tesla's own login page</li>
+      <li>Personal identification information beyond what Tesla provides via the OpenID scope</li>
+      <li>Location data</li>
+      <li>Payment information — this is handled entirely by Stripe</li>
+    </ul>
+
+    <h2>How we use your data</h2>
+    <p>All data collected is used solely to provide the app's functionality — monitoring your Powerwall and executing automated arbitrage cycles on your behalf. We do not sell, share, or transfer your data to any third party for marketing or commercial purposes.</p>
+
+    <h2>Where your data is stored</h2>
+    <p>Authentication tokens and settings are stored securely on Netlify's infrastructure (Netlify Blobs). Netlify is SOC 2 compliant. No sensitive data is stored permanently on your device beyond what is necessary for your current app session.</p>
+
+    <h2>How long we keep your data</h2>
+    <p>Your data is retained for as long as your account is active. You may request deletion at any time by contacting us at <a href="mailto:[YOUR EMAIL]">[YOUR EMAIL]</a>, after which all stored tokens and settings will be permanently deleted within 7 days.</p>
+
+    <h2>Your rights</h2>
+    <p>Under UK GDPR you have the right to access, correct, or delete your personal data at any time. To exercise these rights, please contact us at <a href="mailto:[YOUR EMAIL]">[YOUR EMAIL]</a>.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>We may update this policy from time to time. The date at the top of this page will reflect the most recent revision. Continued use of the app after changes are posted constitutes your acceptance of the updated policy.</p>
+
+  </div>
+</div>
+</body>
+</html>
