@@ -345,10 +345,28 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         <div class="arb-toggle-row">
           <div>
             <div class="arb-toggle-lbl">Overnight arbitrage</div>
-            <div class="arb-toggle-sub">Runs every night 11:30pm – 5:30am</div>
+            <div class="arb-toggle-sub" id="arb-schedule-sub">Runs every night 11:30pm – 5:30am</div>
           </div>
           <button class="big-toggle" id="arb-main-toggle" onclick="toggleArbitrage()"></button>
         </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Strategy settings</div>
+        <div class="settings-row">
+          <div><div class="settings-lbl">Charge to</div><div class="settings-sub">Target % before exporting</div></div>
+          <div style="display:flex;align-items:center;gap:4px"><input class="settings-inp" type="number" id="arb-charge-pct" min="10" max="90" value="50" style="width:70px" /><span style="font-size:13px;color:#8e8e93">%</span></div>
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-lbl">Start time</div><div class="settings-sub">When to begin charging</div></div>
+          <input class="settings-inp" type="time" id="arb-start-time" value="23:30" />
+        </div>
+        <div class="settings-row" style="border:none">
+          <div><div class="settings-lbl">End time</div><div class="settings-sub">Return to normal operation</div></div>
+          <input class="settings-inp" type="time" id="arb-end-time" value="05:30" />
+        </div>
+        <button class="btn-primary" style="margin-top:10px" id="arb-settings-btn" onclick="saveArbSettings()">Save strategy</button>
+        <div id="arb-settings-result" style="font-size:12px;margin-top:8px;min-height:16px"></div>
       </div>
 
       <div class="card">
@@ -357,8 +375,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <div class="phase-row">
             <div class="phase-dot blue"></div>
             <div class="phase-info">
-              <div class="phase-name">Phase 1 — Charge to 50%</div>
-              <div class="phase-desc">11:30pm · Reserve set to 50%, charges from grid</div>
+              <div class="phase-name" id="ph1-name">Phase 1 — Charge to 50%</div>
+              <div class="phase-desc" id="ph1-desc">11:30pm · Reserve set to 50%, charges from grid</div>
             </div>
             <div class="phase-status waiting" id="ph1-status">Waiting</div>
           </div>
@@ -366,7 +384,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
             <div class="phase-dot green"></div>
             <div class="phase-info">
               <div class="phase-name">Phase 2 — Export to grid</div>
-              <div class="phase-desc">When 70% · Reserve 0%, export on · discharge to 0%</div>
+              <div class="phase-desc">When charged · Reserve 0%, export on · discharge to 0%</div>
             </div>
             <div class="phase-status waiting" id="ph2-status">Waiting</div>
           </div>
@@ -382,15 +400,15 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
             <div class="phase-dot purple"></div>
             <div class="phase-info">
               <div class="phase-name">Phase 4 — Standby</div>
-              <div class="phase-desc">When 100% · Wait for 5:30am</div>
+              <div class="phase-desc" id="ph4-desc">When 100% · Wait for 5:30am</div>
             </div>
             <div class="phase-status waiting" id="ph4-status">Waiting</div>
           </div>
           <div class="phase-row">
             <div class="phase-dot grey"></div>
             <div class="phase-info">
-              <div class="phase-name">Phase 5 — Normal operation</div>
-              <div class="phase-desc">5:30am · Autonomous mode, 0% reserve</div>
+              <div class="phase-name" id="ph5-name">Phase 5 — Normal operation</div>
+              <div class="phase-desc" id="ph5-desc">5:30am · Autonomous mode, 0% reserve</div>
             </div>
             <div class="phase-status waiting" id="ph5-status">Waiting</div>
           </div>
@@ -595,6 +613,7 @@ let state = {
   arbExportStartPct: 0,
   normalTariff: JSON.parse(localStorage.getItem('arb_normal_tariff') || 'null'),
   arbTestMode: false,
+  arbSettings: null,
 };
 
 // ── UI helpers ────────────────────────────────────────────
@@ -1169,6 +1188,8 @@ async function pollServerStatus() {
     }
     // Sync earnings
     if (data.stats) state.arbStats = data.stats;
+    // Sync strategy settings to the UI
+    if (data.arbSettings) populateArbSettings(data.arbSettings);
     // Update log display
     const logEl = document.getElementById('arb-log');
     if (logEl && data.log && data.log.length) {
@@ -1289,6 +1310,70 @@ function renderArbUI() {
   if (logEl) logEl.innerHTML = state.arbLog.join('<br>') || 'No activity yet.';
 }
 
+function fmt2(n) { return String(n).padStart(2, '0'); }
+
+function populateArbSettings(settings) {
+  if (!settings) return;
+  const pct = settings.chargeTargetPct || 50;
+  const sh = settings.startHour !== undefined ? settings.startHour : 23;
+  const sm = settings.startMinute !== undefined ? settings.startMinute : 30;
+  const eh = settings.endHour !== undefined ? settings.endHour : 5;
+  const em = settings.endMinute !== undefined ? settings.endMinute : 30;
+  const startStr = fmt2(sh) + ':' + fmt2(sm);
+  const endStr = fmt2(eh) + ':' + fmt2(em);
+
+  // Update the settings form inputs
+  const pctEl = document.getElementById('arb-charge-pct');
+  const startEl = document.getElementById('arb-start-time');
+  const endEl = document.getElementById('arb-end-time');
+  if (pctEl) pctEl.value = pct;
+  if (startEl) startEl.value = startStr;
+  if (endEl) endEl.value = endStr;
+
+  // Keep the timeline and toggle sub-text in sync
+  const ph1name = document.getElementById('ph1-name');
+  const ph1desc = document.getElementById('ph1-desc');
+  const ph4desc = document.getElementById('ph4-desc');
+  const ph5desc = document.getElementById('ph5-desc');
+  const schedSub = document.getElementById('arb-schedule-sub');
+  if (ph1name) ph1name.textContent = 'Phase 1 — Charge to ' + pct + '%';
+  if (ph1desc) ph1desc.textContent = startStr + ' · Reserve set to ' + pct + '%, charges from grid';
+  if (ph4desc) ph4desc.textContent = 'When 100% · Wait for ' + endStr;
+  if (ph5desc) ph5desc.textContent = endStr + ' · Autonomous mode, 0% reserve';
+  if (schedSub) schedSub.textContent = 'Runs every night ' + startStr + ' – ' + endStr;
+
+  // Also update the client-side monitor threshold
+  state.arbSettings = { chargeTargetPct: pct, startHour: sh, startMinute: sm, endHour: eh, endMinute: em };
+}
+
+async function saveArbSettings() {
+  const pct = parseInt(document.getElementById('arb-charge-pct').value);
+  const startTime = document.getElementById('arb-start-time').value;
+  const endTime = document.getElementById('arb-end-time').value;
+  if (isNaN(pct) || pct < 10 || pct > 90) {
+    const r = document.getElementById('arb-settings-result');
+    r.textContent = 'Charge % must be between 10 and 90.'; r.style.color = '#ff3b30'; return;
+  }
+  const [startHour, startMinute] = startTime.split(':').map(Number);
+  const [endHour, endMinute] = endTime.split(':').map(Number);
+  const btn = document.getElementById('arb-settings-btn');
+  const result = document.getElementById('arb-settings-result');
+  btn.disabled = true; result.textContent = 'Saving…'; result.style.color = '#8e8e93';
+  try {
+    await fetch('/.netlify/functions/arb-api', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save_arb_settings', chargeTargetPct: pct, startHour, startMinute, endHour, endMinute })
+    });
+    populateArbSettings({ chargeTargetPct: pct, startHour, startMinute, endHour, endMinute });
+    result.textContent = 'Strategy saved — takes effect on next cycle.';
+    result.style.color = '#1a7f37';
+    toast('Strategy settings saved');
+  } catch(e) {
+    result.textContent = 'Error: ' + e.message; result.style.color = '#ff3b30';
+  }
+  btn.disabled = false;
+}
+
 async function toggleArbitrage() {
   state.arbEnabled = !state.arbEnabled;
   localStorage.setItem('arb_enabled', state.arbEnabled);
@@ -1338,7 +1423,7 @@ async function startArbCycle() {
 function startArbMonitor() {
   if (state.arbMonitorTimer) clearInterval(state.arbMonitorTimer);
   const interval = state.arbTestMode ? 10000 : 60000;
-  const fullPct  = state.arbTestMode ? 75 : 50;
+  const fullPct  = state.arbTestMode ? 75 : (state.arbSettings ? state.arbSettings.chargeTargetPct : 50);
   const emptyPct = state.arbTestMode ? 65 : 2;
   const rechargePct = state.arbTestMode ? 70 : 98;
   state.arbMonitorTimer = setInterval(async () => {
