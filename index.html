@@ -200,15 +200,14 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       <div class="card setup-card" style="margin-top:0">
         <div class="setup-icon">🐙</div>
         <div class="setup-title">Connect Octopus Energy</div>
-        <div class="setup-sub">Add your Octopus API key and tariff code to pull live Agile export rates.</div>
+        <div class="setup-sub">Enter your API key and account number — we'll detect your Agile tariff automatically.</div>
         <div class="field-label">API Key</div>
         <input class="inp" id="oct-key" type="password" placeholder="sk_live_..." autocomplete="off" />
-        <div class="field-label">Agile Outgoing tariff code</div>
-        <input class="inp" id="oct-tariff" type="text" placeholder="E-1R-AGILE-OUTGOING-19-05-13-C" autocomplete="off" />
-        <div class="field-label">Product code</div>
-        <input class="inp" id="oct-product" type="text" placeholder="AGILE-OUTGOING-19-05-13" autocomplete="off" />
-        <button class="btn-primary" onclick="saveOctopus()">Save Octopus settings</button>
-        <div class="api-note">Find your API key and tariff details in your <a href="https://octopus.energy/dashboard" target="_blank">Octopus account</a> under API access.</div>
+        <div class="field-label">Account number</div>
+        <input class="inp" id="oct-account" type="text" placeholder="A-12345678" autocomplete="off" />
+        <button class="btn-primary" id="oct-connect-btn" onclick="connectOctopus()">Find my tariff</button>
+        <div id="oct-result" style="font-size:12px;margin-top:10px;min-height:16px;line-height:1.5;text-align:left"></div>
+        <div class="api-note">Find your API key and account number in your <a href="https://octopus.energy/dashboard" target="_blank">Octopus account</a> under API access.</div>
       </div>
     </div>
 
@@ -516,9 +515,10 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       <div class="card">
         <div class="card-title">Octopus Energy</div>
         <div class="settings-row"><div><div class="settings-lbl">API Key</div></div><input class="settings-inp" id="s-oct-key" type="password" placeholder="sk_live_..." /></div>
-        <div class="settings-row"><div><div class="settings-lbl">Tariff code</div></div><input class="settings-inp" id="s-oct-tariff" type="text" placeholder="E-1R-AGILE-..." /></div>
-        <div class="settings-row"><div><div class="settings-lbl">Product code</div></div><input class="settings-inp" id="s-oct-product" type="text" placeholder="AGILE-OUTGOING-..." /></div>
-        <button class="btn-primary" style="margin-top:10px" onclick="saveOctopusSettings()">Save Octopus settings</button>
+        <div class="settings-row"><div><div class="settings-lbl">Account number</div></div><input class="settings-inp" id="s-oct-account" type="text" placeholder="A-12345678" /></div>
+        <div class="settings-row"><div><div class="settings-lbl">Tariff detected</div><div class="settings-sub" id="s-oct-tariff-txt">—</div></div></div>
+        <button class="btn-primary" style="margin-top:10px" id="s-oct-btn" onclick="saveOctopusSettings()">Re-detect tariff</button>
+        <div id="s-oct-result" style="font-size:12px;margin-top:8px;min-height:16px"></div>
       </div>
       <div class="card">
         <div class="card-title">Notifications</div>
@@ -585,6 +585,7 @@ let state = {
   clientSecret: localStorage.getItem('tesla_client_secret') || '',
   redirectUri: localStorage.getItem('tesla_redirect_uri') || '',
   octKey: localStorage.getItem('oct_key') || '',
+  octAccount: localStorage.getItem('oct_account') || '',
   octTariff: localStorage.getItem('oct_tariff') || '',
   octProduct: localStorage.getItem('oct_product') || '',
   energySiteId: localStorage.getItem('energy_site_id') || null,
@@ -922,14 +923,52 @@ function monitorPctExport(target) {
 }
 
 // ── Tariff / Octopus ──────────────────────────────────────
-function saveOctopus() {
-  const key=document.getElementById('oct-key').value.trim();
-  const tariff=document.getElementById('oct-tariff').value.trim();
-  const product=document.getElementById('oct-product').value.trim();
-  if (!key||!tariff||!product) { toast('Please fill in all Octopus fields.'); return; }
-  localStorage.setItem('oct_key',key); localStorage.setItem('oct_tariff',tariff); localStorage.setItem('oct_product',product);
-  state.octKey=key; state.octTariff=tariff; state.octProduct=product;
-  toast('Octopus settings saved!');
+async function lookupOctopusTariff(apiKey, accountNumber) {
+  const resp = await fetch('https://api.octopus.energy/v1/accounts/' + encodeURIComponent(accountNumber) + '/', {
+    headers: { 'Authorization': 'Basic ' + btoa(apiKey + ':') }
+  });
+  if (!resp.ok) throw new Error('Invalid API key or account number (HTTP ' + resp.status + ')');
+  const data = await resp.json();
+  const now = new Date().toISOString();
+  for (const property of data.properties || []) {
+    for (const mp of property.electricity_meter_points || []) {
+      for (const agreement of mp.agreements || []) {
+        if (agreement.tariff_code && agreement.tariff_code.includes('AGILE-OUTGOING') &&
+            (!agreement.valid_to || agreement.valid_to > now)) {
+          const tariffCode = agreement.tariff_code;
+          // Derive product code from tariff code: E-1R-AGILE-OUTGOING-19-05-13-C → AGILE-OUTGOING-19-05-13
+          const productCode = tariffCode.replace(/^[A-Z]-\dR-/, '').replace(/-[A-Z]$/, '');
+          return { tariffCode, productCode };
+        }
+      }
+    }
+  }
+  throw new Error('No active Agile Outgoing tariff found on this account');
+}
+
+async function connectOctopus() {
+  const key = document.getElementById('oct-key').value.trim();
+  const account = document.getElementById('oct-account').value.trim();
+  if (!key || !account) { toast('Please enter your API key and account number.'); return; }
+  const btn = document.getElementById('oct-connect-btn');
+  const result = document.getElementById('oct-result');
+  btn.disabled = true; btn.textContent = 'Looking up tariff…';
+  result.textContent = ''; result.style.color = '#8e8e93';
+  try {
+    const { tariffCode, productCode } = await lookupOctopusTariff(key, account);
+    localStorage.setItem('oct_key', key); state.octKey = key;
+    localStorage.setItem('oct_account', account); state.octAccount = account;
+    localStorage.setItem('oct_tariff', tariffCode); state.octTariff = tariffCode;
+    localStorage.setItem('oct_product', productCode); state.octProduct = productCode;
+    result.style.color = '#1a7f37';
+    result.textContent = 'Connected — found tariff: ' + tariffCode;
+    toast('Octopus connected!');
+  } catch(e) {
+    result.style.color = '#ff3b30';
+    result.textContent = 'Error: ' + e.message;
+    toast('Octopus lookup failed');
+  }
+  btn.disabled = false; btn.textContent = 'Find my tariff';
 }
 
 async function loadRates() {
@@ -1055,7 +1094,8 @@ async function syncOctopusToServer() {
         action: 'save_settings',
         octKey: state.octKey,
         octTariff: state.octTariff,
-        octProduct: state.octProduct
+        octProduct: state.octProduct,
+        octAccount: state.octAccount
       })
     });
   } catch(e) { console.warn('Octopus sync failed:', e.message); }
@@ -1483,21 +1523,36 @@ function initHealthPage() {
 
 // ── Settings ──────────────────────────────────────────────
 function populateSettings() {
-  document.getElementById('s-client-id').value=state.clientId;
-  document.getElementById('s-redirect-uri').value=state.redirectUri;
-  document.getElementById('s-oct-key').value=state.octKey;
-  document.getElementById('s-oct-tariff').value=state.octTariff;
-  document.getElementById('s-oct-product').value=state.octProduct;
-  document.getElementById('tesla-status-txt').textContent=state.teslaToken?'Connected':'Not connected';
+  document.getElementById('s-client-id').value = state.clientId;
+  document.getElementById('s-redirect-uri').value = state.redirectUri;
+  document.getElementById('s-oct-key').value = state.octKey;
+  document.getElementById('s-oct-account').value = state.octAccount || '';
+  document.getElementById('s-oct-tariff-txt').textContent = state.octTariff || '—';
+  document.getElementById('tesla-status-txt').textContent = state.teslaToken ? 'Connected' : 'Not connected';
 }
-function saveOctopusSettings() {
-  const key=document.getElementById('s-oct-key').value.trim();
-  const tariff=document.getElementById('s-oct-tariff').value.trim();
-  const product=document.getElementById('s-oct-product').value.trim();
-  localStorage.setItem('oct_key',key); state.octKey=key;
-  localStorage.setItem('oct_tariff',tariff); state.octTariff=tariff;
-  localStorage.setItem('oct_product',product); state.octProduct=product;
-  toast('Octopus settings saved');
+async function saveOctopusSettings() {
+  const key = document.getElementById('s-oct-key').value.trim();
+  const account = document.getElementById('s-oct-account').value.trim();
+  if (!key || !account) { toast('Please enter your API key and account number.'); return; }
+  const btn = document.getElementById('s-oct-btn');
+  const result = document.getElementById('s-oct-result');
+  btn.disabled = true; btn.textContent = 'Looking up…';
+  result.textContent = ''; result.style.color = '#8e8e93';
+  try {
+    const { tariffCode, productCode } = await lookupOctopusTariff(key, account);
+    localStorage.setItem('oct_key', key); state.octKey = key;
+    localStorage.setItem('oct_account', account); state.octAccount = account;
+    localStorage.setItem('oct_tariff', tariffCode); state.octTariff = tariffCode;
+    localStorage.setItem('oct_product', productCode); state.octProduct = productCode;
+    document.getElementById('s-oct-tariff-txt').textContent = tariffCode;
+    result.style.color = '#1a7f37';
+    result.textContent = 'Tariff updated successfully';
+    toast('Octopus settings saved');
+  } catch(e) {
+    result.style.color = '#ff3b30';
+    result.textContent = 'Error: ' + e.message;
+  }
+  btn.disabled = false; btn.textContent = 'Re-detect tariff';
 }
 function reconnectTesla() {
   state.clientId=document.getElementById('s-client-id').value.trim();
