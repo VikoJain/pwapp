@@ -1088,7 +1088,7 @@ function updateCurrentRate() {
 }
 
 function getLabels() {
-  return Array.from({length:48},(_,i)=>{const h=Math.floor(i/2),m=i%2===0?'00':'30';return h%4===0?String(h).padStart(2,'0')+':'+m:'';});
+  return Array.from({length:48},(_,i)=>{const h=Math.floor(i/2);return i%2===0?String(h).padStart(2,'0')+':00':'';});
 }
 function getBarColors(rates) {
   return rates.map(r=>r===null?'#e5e5ea':r>=25?'#34c759':r>=18?'#007aff':'#ff9500');
@@ -1096,7 +1096,7 @@ function getBarColors(rates) {
 function renderRateChart(rates) {
   if (state.rateChart) state.rateChart.destroy();
   const ctx=document.getElementById('rateChart').getContext('2d');
-  state.rateChart = new Chart(ctx,{type:'bar',data:{labels:getLabels(),datasets:[{data:rates.map(r=>r===null?0:r),backgroundColor:getBarColors(rates),borderWidth:0,barPercentage:0.95,categoryPercentage:1.0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{title:items=>{const i=items[0].dataIndex,h=Math.floor(i/2),m=i%2===0?'00':'30',h2=i%2===0?h:h+1,m2=i%2===0?'30':'00';return String(h).padStart(2,'0')+':'+m+' – '+String(h2).padStart(2,'0')+':'+m2;},label:item=>rates[item.dataIndex]!==null?' '+rates[item.dataIndex].toFixed(1)+'p/kWh':' No data'}}},scales:{x:{ticks:{font:{size:10},color:'#8e8e93',maxRotation:0,autoSkip:false},grid:{display:false},border:{display:false}},y:{ticks:{font:{size:10},color:'#8e8e93',callback:v=>v+'p'},grid:{color:'#f2f2f7'},border:{display:false}}}}});
+  state.rateChart = new Chart(ctx,{type:'bar',data:{labels:getLabels(),datasets:[{data:rates.map(r=>r===null?0:r),backgroundColor:getBarColors(rates),borderWidth:0,barPercentage:0.95,categoryPercentage:1.0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{title:items=>{const i=items[0].dataIndex,h=Math.floor(i/2),m=i%2===0?'00':'30',h2=i%2===0?h:h+1,m2=i%2===0?'30':'00';return String(h).padStart(2,'0')+':'+m+' – '+String(h2).padStart(2,'0')+':'+m2;},label:item=>rates[item.dataIndex]!==null?' '+rates[item.dataIndex].toFixed(1)+'p/kWh':' No data'}}},scales:{x:{ticks:{font:{size:9},color:'#8e8e93',maxRotation:90,minRotation:90,autoSkip:false},grid:{display:false},border:{display:false}},y:{ticks:{font:{size:10},color:'#8e8e93',callback:v=>v+'p'},grid:{color:'#f2f2f7'},border:{display:false}}}}});
 }
 function renderBestSlots(rates) {
   const valid=rates.map((r,i)=>r!==null?{r,i}:null).filter(Boolean);
@@ -1797,7 +1797,7 @@ function renderSoeChart() {
     type: 'line',
     data: { labels, datasets: [{ data: buckets, borderColor: '#007aff', backgroundColor: 'rgba(0,122,255,0.08)', tension: 0.3, fill: true, pointRadius: 0, borderWidth: 2, spanGaps: true }] },
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: {
-      x: { ticks: { font: { size: 10 }, color: '#8e8e93', maxRotation: 0, autoSkip: false }, grid: { display: false }, border: { display: false } },
+      x: { ticks: { font: { size: 9 }, color: '#8e8e93', maxRotation: 90, minRotation: 90, autoSkip: false }, grid: { display: false }, border: { display: false } },
       y: { min: 0, max: 100, ticks: { font: { size: 10 }, color: '#8e8e93', callback: v => v+'%' }, grid: { color: '#f2f2f7' }, border: { display: false } }
     }}
   });
