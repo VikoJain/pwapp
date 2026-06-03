@@ -246,7 +246,9 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 
       <div class="card">
         <div class="card-title">Timed export</div>
-        <div class="btn-grid">
+        <div class="btn-grid" style="grid-template-columns:1fr 1fr 1fr">
+          <button class="exp-btn" id="btn1" onclick="startTimedExport(1,this)">Export 1 min</button>
+          <button class="exp-btn" id="btn3" onclick="startTimedExport(3,this)">Export 3 min</button>
           <button class="exp-btn" id="btn5" onclick="startTimedExport(5,this)">Export 5 min</button>
           <button class="exp-btn" id="btn10" onclick="startTimedExport(10,this)">Export 10 min</button>
           <button class="exp-btn" id="btn15" onclick="startTimedExport(15,this)">Export 15 min</button>
@@ -926,7 +928,7 @@ function updateTimerBar() {
 }
 
 function disableExportBtns(disabled) {
-  ['btn5','btn10','btn15'].forEach(id => document.getElementById(id).disabled = disabled);
+  ['btn1','btn3','btn5','btn10','btn15'].forEach(id => document.getElementById(id).disabled = disabled);
 }
 
 async function startPctExport() {
@@ -963,28 +965,35 @@ async function startPctExport() {
 }
 
 function monitorPctExport(target) {
+  // Tesla API data can be 30-60s stale. We stop at target+4% AND when rate projection
+  // shows the battery will hit target within the next ~30s, whichever triggers first.
+  const STOP_BUFFER_PCT = 4;
   if (state.pctMonitorInterval) clearInterval(state.pctMonitorInterval);
   state.pctMonitorInterval = setInterval(async () => {
     try {
       const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
       const pct = Math.round(data.response.percentage_charged||0);
+      const battW = data.response.battery_power || 0;
+      // Project where battery will be in ~30s to account for API lag + command delay
+      const dropPerSec = battW > 0 ? (battW / 13500) * 100 / 3600 : 0;
+      const projectedPct = pct - (dropPerSec * 30);
       document.getElementById('pct-bar').innerHTML = 'Exporting — battery at <span class="hl">'+pct+'%</span>, stopping at '+target+'%.';
-      if (pct <= target) {
+      if (pct <= target + STOP_BUFFER_PCT || projectedPct <= target) {
         clearInterval(state.pctMonitorInterval);
         state.pctMonitorInterval = null;
         localStorage.removeItem('pct_export_target');
         await setExportMode(false);
-        document.getElementById('pct-bar').innerHTML = 'Export complete — stopped at <span class="hl">'+pct+'%</span>.';
+        document.getElementById('pct-bar').innerHTML = 'Export complete — stopped at <span class="hl">'+pct+'%</span> (target: '+target+'%).';
         document.getElementById('pct-go-btn').textContent = 'Export';
         document.getElementById('pct-go-btn').disabled = false;
         document.getElementById('pct-go-btn').onclick = startPctExport;
-        toast('Target reached — export stopped at '+pct+'%');
+        toast('Stopped at '+pct+'% — target was '+target+'%');
         setTimeout(refreshData, 2000);
       }
     } catch(e) {
       // Do not stop monitoring on a transient API error — just skip this tick and retry
     }
-  }, 15000); // Poll every 15 seconds
+  }, 10000); // Poll every 10 seconds
 }
 
 // ── Tariff / Octopus ──────────────────────────────────────
