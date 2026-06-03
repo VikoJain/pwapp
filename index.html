@@ -188,14 +188,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         <div class="setup-icon">⚡</div>
         <div class="setup-title">Connect Tesla</div>
         <div class="setup-sub">Sign in with your Tesla account to access your Powerwall data and controls.</div>
-        <div class="field-label">Tesla Client ID</div>
-        <input class="inp" id="tesla-client-id" type="text" placeholder="Your Tesla app Client ID" autocomplete="off" />
-        <div class="field-label">Client Secret</div>
-        <input class="inp" id="tesla-client-secret" type="password" placeholder="Your Tesla app Client Secret" autocomplete="off" />
-        <div class="field-label">Redirect URI</div>
-        <input class="inp" id="tesla-redirect-uri" type="text" placeholder="https://your-app.netlify.app/callback" autocomplete="off" />
-        <button class="btn-primary" onclick="startTeslaAuth()">Connect with Tesla</button>
-        <div class="api-note">Your credentials are stored only on this device. Get your Client ID from <a href="https://developer.tesla.com" target="_blank">developer.tesla.com</a>.</div>
+        <button class="btn-primary" id="tesla-connect-btn" onclick="startTeslaAuth()">Connect with Tesla</button>
+        <div id="tesla-connect-status" style="font-size:12px;margin-top:10px;min-height:16px;color:#8e8e93;text-align:center"></div>
       </div>
       <div class="card setup-card" style="margin-top:0">
         <div class="setup-icon">🐙</div>
@@ -507,9 +501,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       <div class="card">
         <div class="card-title">Tesla connection</div>
         <div class="settings-row"><div><div class="settings-lbl">Status</div><div class="settings-sub" id="tesla-status-txt">Not connected</div></div></div>
-        <div class="settings-row"><div><div class="settings-lbl">Client ID</div></div><input class="settings-inp" id="s-client-id" type="text" placeholder="Client ID" /></div>
-        <div class="settings-row"><div><div class="settings-lbl">Redirect URI</div></div><input class="settings-inp" id="s-redirect-uri" type="text" placeholder="https://..." /></div>
-        <button class="btn-primary" style="margin-top:10px" onclick="reconnectTesla()">Reconnect Tesla</button>
+        <button class="btn-primary" style="margin-top:10px" onclick="startTeslaAuth()">Reconnect Tesla</button>
         <button class="btn-secondary" onclick="disconnectTesla()">Disconnect Tesla</button>
       </div>
       <div class="card">
@@ -638,61 +630,106 @@ function setConnStatus(s) {
 }
 
 // ── Tesla Auth ────────────────────────────────────────────
+function getDeviceId() {
+  let id = localStorage.getItem('device_id');
+  if (!id) {
+    id = 'dev_' + Math.random().toString(36).substr(2,9) + Math.random().toString(36).substr(2,9);
+    localStorage.setItem('device_id', id);
+  }
+  return id;
+}
+
 async function startTeslaAuth() {
-  const clientId = document.getElementById('tesla-client-id').value.trim();
-  const clientSecret = document.getElementById('tesla-client-secret').value.trim();
-  const redirectUri = document.getElementById('tesla-redirect-uri').value.trim();
-  if (!clientId||!clientSecret||!redirectUri) { toast('Please enter all Tesla fields.'); return; }
-  localStorage.setItem('tesla_client_id', clientId);
-  localStorage.setItem('tesla_client_secret', clientSecret);
-  localStorage.setItem('tesla_redirect_uri', redirectUri);
-  state.clientId=clientId; state.clientSecret=clientSecret; state.redirectUri=redirectUri;
-  const authState = Math.random().toString(36).substring(2);
-  localStorage.setItem('tesla_auth_state', authState);
-  const scope = 'openid offline_access user_data energy_device_data energy_cmds';
-  const url = `https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&state=${encodeURIComponent(authState)}&audience=https://fleet-api.prd.eu.vn.cloud.tesla.com`;
-  window.location.href = url;
+  const btn = document.getElementById('tesla-connect-btn');
+  const status = document.getElementById('tesla-connect-status');
+  if (btn) btn.disabled = true;
+  if (status) { status.textContent = 'Connecting…'; status.style.color = '#8e8e93'; }
+  try {
+    const deviceId = getDeviceId();
+    const resp = await fetch('/.netlify/functions/auth?action=url&device_id=' + encodeURIComponent(deviceId));
+    const data = await resp.json();
+    if (data.authUrl) {
+      window.location.href = data.authUrl;
+    } else {
+      throw new Error(data.error || 'Could not get login URL');
+    }
+  } catch(e) {
+    if (btn) btn.disabled = false;
+    if (status) { status.textContent = 'Error: ' + e.message; status.style.color = '#ff3b30'; }
+    toast('Tesla connection failed: ' + e.message);
+  }
 }
 
 async function handleOAuthCallback() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const code = urlParams.get('code') || sessionStorage.getItem('tesla_oauth_code');
-  const returnedState = urlParams.get('state') || sessionStorage.getItem('tesla_oauth_state');
-  sessionStorage.removeItem('tesla_oauth_code'); sessionStorage.removeItem('tesla_oauth_state');
-  const savedState = localStorage.getItem('tesla_auth_state');
-  if (!code || returnedState !== savedState) return;
+  // The callback.html exchanges the code server-side and stores the result here
+  const authResult = sessionStorage.getItem('tesla_auth_result');
+  sessionStorage.removeItem('tesla_auth_result');
+  if (!authResult) return;
   history.replaceState({}, '', window.location.pathname);
-  setConnStatus('loading'); toast('Completing Tesla login...');
+  setConnStatus('loading');
+  toast('Completing Tesla login...');
   try {
-    const resp = await fetch(`${TESLA_AUTH_URL}/token`, {
-      method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body: new URLSearchParams({ grant_type:'authorization_code', client_id:localStorage.getItem('tesla_client_id'), client_secret:localStorage.getItem('tesla_client_secret'), code, redirect_uri:localStorage.getItem('tesla_redirect_uri'), audience:TESLA_API })
-    });
-    const data = await resp.json();
-    if (data.access_token) {
-      localStorage.setItem('tesla_token', data.access_token);
-      localStorage.setItem('tesla_refresh', data.refresh_token);
-      localStorage.setItem('tesla_expiry', Date.now() + data.expires_in*1000);
-      state.teslaToken=data.access_token; state.teslaRefresh=data.refresh_token;
-      setConnStatus('connected'); toast('Tesla connected!');
-      await discoverEnergySite(); switchTab('home');
-    } else throw new Error(data.error||'Auth failed');
-  } catch(e) { setConnStatus(''); toast('Tesla login failed: '+e.message); }
+    const data = JSON.parse(authResult);
+    localStorage.setItem('tesla_token', data.access_token);
+    localStorage.setItem('tesla_refresh', data.refresh_token);
+    localStorage.setItem('tesla_expiry', data.expiry);
+    state.teslaToken = data.access_token;
+    state.teslaRefresh = data.refresh_token;
+    state.teslaExpiry = data.expiry;
+    setConnStatus('connected');
+    toast('Tesla connected!');
+    await discoverEnergySite();
+    switchTab('home');
+  } catch(e) { setConnStatus(''); toast('Tesla login failed: ' + e.message); }
 }
 
 async function refreshTeslaToken() {
-  if (!state.teslaRefresh||!state.clientId) return false;
+  const deviceId = localStorage.getItem('device_id');
+  if (!deviceId) return false;
   try {
-    const resp = await fetch(`${TESLA_AUTH_URL}/token`, {
-      method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body: new URLSearchParams({ grant_type:'refresh_token', client_id:state.clientId, refresh_token:state.teslaRefresh })
+    const resp = await fetch('/.netlify/functions/auth', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'refresh', device_id: deviceId })
     });
     const data = await resp.json();
     if (data.access_token) {
       localStorage.setItem('tesla_token', data.access_token);
       localStorage.setItem('tesla_refresh', data.refresh_token);
-      localStorage.setItem('tesla_expiry', Date.now() + data.expires_in*1000);
-      state.teslaToken=data.access_token; state.teslaRefresh=data.refresh_token;
+      localStorage.setItem('tesla_expiry', data.expiry);
+      state.teslaToken = data.access_token;
+      state.teslaRefresh = data.refresh_token;
+      state.teslaExpiry = data.expiry;
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
+
+async function restoreTokenFromServer() {
+  const deviceId = localStorage.getItem('device_id');
+  if (!deviceId) return false;
+  try {
+    const resp = await fetch('/.netlify/functions/auth?action=restore&device_id=' + encodeURIComponent(deviceId));
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    if (data.access_token) {
+      localStorage.setItem('tesla_token', data.access_token);
+      localStorage.setItem('tesla_refresh', data.refresh_token);
+      localStorage.setItem('tesla_expiry', data.expiry);
+      if (data.energy_site_id) {
+        localStorage.setItem('energy_site_id', data.energy_site_id);
+        state.energySiteId = data.energy_site_id;
+      }
+      if (data.api_base) {
+        TESLA_API = data.api_base;
+        localStorage.setItem('tesla_api', data.api_base);
+      }
+      state.teslaToken = data.access_token;
+      state.teslaRefresh = data.refresh_token;
+      state.teslaExpiry = data.expiry;
+      setConnStatus('connected');
+      switchTab('home');
+      startAutoRefresh();
       return true;
     }
   } catch(e) {}
@@ -725,6 +762,14 @@ async function discoverEnergySite() {
         state.energySiteId = site.energy_site_id;
         localStorage.setItem('energy_site_id', site.energy_site_id);
         localStorage.setItem('tesla_api', api);
+        // Save to server so it survives reinstall
+        const deviceId = localStorage.getItem('device_id');
+        if (deviceId) {
+          fetch('/.netlify/functions/auth', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'save_site', device_id: deviceId, energy_site_id: site.energy_site_id, api_base: api })
+          }).catch(() => {});
+        }
         return;
       }
     } catch(e) { continue; }
@@ -1067,22 +1112,17 @@ function initTariffPage() {
 
 // ── Server-side arbitrage ─────────────────────────────────
 async function syncTokenToServer() {
-  if (!state.teslaToken || !state.energySiteId) return;
+  // Token is already stored server-side from the auth flow.
+  // This just ensures the energy site ID is current (e.g. if discovery ran after login).
+  if (!state.energySiteId) return;
+  const deviceId = localStorage.getItem('device_id');
+  if (!deviceId) return;
   try {
-    await fetch('/.netlify/functions/arb-api', {
+    await fetch('/.netlify/functions/auth', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'save_token',
-        access: state.teslaToken,
-        refresh: state.teslaRefresh,
-        expiry: parseInt(localStorage.getItem('tesla_expiry') || '0'),
-        clientId: state.clientId,
-        clientSecret: state.clientSecret,
-        apiBase: TESLA_API,
-        energySiteId: state.energySiteId
-      })
+      body: JSON.stringify({ action: 'save_site', device_id: deviceId, energy_site_id: state.energySiteId, api_base: TESLA_API })
     });
-  } catch(e) { console.warn('Token sync failed:', e.message); }
+  } catch(e) {}
 }
 
 async function syncOctopusToServer() {
@@ -1523,8 +1563,6 @@ function initHealthPage() {
 
 // ── Settings ──────────────────────────────────────────────
 function populateSettings() {
-  document.getElementById('s-client-id').value = state.clientId;
-  document.getElementById('s-redirect-uri').value = state.redirectUri;
   document.getElementById('s-oct-key').value = state.octKey;
   document.getElementById('s-oct-account').value = state.octAccount || '';
   document.getElementById('s-oct-tariff-txt').textContent = state.octTariff || '—';
@@ -1555,15 +1593,7 @@ async function saveOctopusSettings() {
   btn.disabled = false; btn.textContent = 'Re-detect tariff';
 }
 function reconnectTesla() {
-  state.clientId=document.getElementById('s-client-id').value.trim();
-  state.redirectUri=document.getElementById('s-redirect-uri').value.trim();
-  localStorage.setItem('tesla_client_id',state.clientId);
-  localStorage.setItem('tesla_redirect_uri',state.redirectUri);
-  const authState=Math.random().toString(36).substring(2);
-  localStorage.setItem('tesla_auth_state',authState);
-  const scope='openid offline_access user_data energy_device_data energy_cmds';
-  const url=`https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3/authorize?client_id=${encodeURIComponent(state.clientId)}&redirect_uri=${encodeURIComponent(state.redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&state=${encodeURIComponent(authState)}&audience=https://fleet-api.prd.eu.vn.cloud.tesla.com`;
-  window.open(url,'_blank');
+  startTeslaAuth();
 }
 function disconnectTesla() {
   if (!confirm('Disconnect Tesla? You will need to log in again.')) return;
@@ -1573,17 +1603,21 @@ function disconnectTesla() {
 }
 
 // ── Init ──────────────────────────────────────────────────
-function init() {
-  state.clientId=localStorage.getItem('tesla_client_id')||'';
-  state.redirectUri=localStorage.getItem('tesla_redirect_uri')||'';
+async function init() {
   state.octKey=localStorage.getItem('oct_key')||'';
+  state.octAccount=localStorage.getItem('oct_account')||'';
   state.octTariff=localStorage.getItem('oct_tariff')||'';
   state.octProduct=localStorage.getItem('oct_product')||'';
 
-  const urlParams=new URLSearchParams(window.location.search);
-  const urlCode=urlParams.get('code');
-  const storedCode=sessionStorage.getItem('tesla_oauth_code');
-  if (urlCode||storedCode) { handleOAuthCallback(); return; }
+  // Ensure a device ID exists on this device
+  getDeviceId();
+
+  // Check if we're returning from a Tesla OAuth login
+  const authResult = sessionStorage.getItem('tesla_auth_result');
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlCode = urlParams.get('code');
+  const storedCode = sessionStorage.getItem('tesla_oauth_code');
+  if (authResult || urlCode || storedCode) { handleOAuthCallback(); return; }
 
   if (state.teslaToken) {
     setConnStatus('connected');
@@ -1594,8 +1628,15 @@ function init() {
     } else {
       startAutoRefresh();
     }
-  } else if (state.octKey) { switchTab('tariff'); }
-  else { switchTab('setup'); }
+  } else {
+    // No token in localStorage — try to silently restore from server (e.g. after reinstall)
+    const deviceId = localStorage.getItem('device_id');
+    const restored = deviceId ? await restoreTokenFromServer() : false;
+    if (!restored) {
+      if (state.octKey) switchTab('tariff');
+      else switchTab('setup');
+    }
+  }
 
   // Start background auto-refresh every 30 seconds
   if (state.teslaToken && state.energySiteId) startAutoRefresh();
