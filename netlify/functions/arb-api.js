@@ -10,10 +10,19 @@ exports.handler = async (event) => {
   try {
     const { getStore } = require('@netlify/blobs');
     const store = getStore({ name: 'arb', siteID: process.env.SITE_ID, token: process.env.NETLIFY_API_TOKEN });
-    const state = JSON.parse(await store.get('state') || '{"phase":0,"enabled":false,"log":[],"stats":{"kwh":0,"rate":0,"earned":0}}');
+    const state = JSON.parse(await store.get('state') || '{"phase":0,"enabled":false,"log":[],"stats":{"kwh":0,"rate":0,"earned":0,"importCost":0,"netProfit":0}}');
 
     if (event.httpMethod === 'GET') {
-      return { statusCode: 200, headers: CORS, body: JSON.stringify(state) };
+      if (event.queryStringParameters && event.queryStringParameters.type === 'actions') {
+        const actionLog = JSON.parse(await store.get('action_log') || '[]');
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ actionLog }) };
+      }
+      if (event.queryStringParameters && event.queryStringParameters.type === 'settings') {
+        const settings = JSON.parse(await store.get('oct_settings') || 'null');
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ settings }) };
+      }
+      const arbSettings = JSON.parse(await store.get('arb_settings') || 'null');
+      return { statusCode: 200, headers: CORS, body: JSON.stringify({ ...state, arbSettings }) };
     }
 
     if (event.httpMethod === 'POST') {
@@ -35,6 +44,39 @@ exports.handler = async (event) => {
         state.log.unshift('[' + time + '] Arbitrage ' + (body.enabled ? 'enabled — server-side, starts at 23:30' : 'disabled by user'));
         if (!body.enabled) state.phase = 0;
         await store.set('state', JSON.stringify(state));
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
+
+      if (body.action === 'save_settings') {
+        await store.set('oct_settings', JSON.stringify({
+          octKey: body.octKey,
+          octTariff: body.octTariff,
+          octProduct: body.octProduct,
+          octAccount: body.octAccount,
+          importTariff: body.importTariff,
+          importProduct: body.importProduct,
+          cheapRate: body.cheapRate
+        }));
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
+
+      if (body.action === 'save_arb_settings') {
+        await store.set('arb_settings', JSON.stringify({
+          chargeTargetPct: parseInt(body.chargeTargetPct) || 50,
+          startHour: body.startHour !== undefined ? parseInt(body.startHour) : 23,
+          startMinute: body.startMinute !== undefined ? parseInt(body.startMinute) : 30,
+          endHour: body.endHour !== undefined ? parseInt(body.endHour) : 5,
+          endMinute: body.endMinute !== undefined ? parseInt(body.endMinute) : 30
+        }));
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
+
+      if (body.action === 'log_action') {
+        const actionLog = JSON.parse(await store.get('action_log') || '[]');
+        const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        actionLog.unshift({ ts: Date.now(), time, msg: body.msg });
+        if (actionLog.length > 100) actionLog.length = 100;
+        await store.set('action_log', JSON.stringify(actionLog));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
     }
