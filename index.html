@@ -888,6 +888,11 @@ async function startTimedExport(mins, btn) {
     // Wall-clock end time — survives screen lock, tab backgrounding and page reload
     state.exportEndTime = Date.now() + mins * 60 * 1000;
     localStorage.setItem('export_end_time', state.exportEndTime);
+    // Save end time to server so arb-tick can stop the export if the app stays backgrounded
+    fetch('/.netlify/functions/arb-api', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save_timed_export', endTime: state.exportEndTime })
+    }).catch(() => {});
     updateTimerBar();
     state.exportTimer = setInterval(async () => {
       if (Date.now() >= state.exportEndTime) { await stopExport(); return; }
@@ -906,6 +911,11 @@ async function stopExport() {
   state.exportEndTime = null;
   localStorage.removeItem('export_end_time');
   localStorage.removeItem('pct_export_target');
+  // Clear server-side timed export record
+  fetch('/.netlify/functions/arb-api', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'clear_timed_export' })
+  }).catch(() => {});
   document.getElementById('timer-bar').textContent = 'Export stopped.';
   document.getElementById('pct-bar').textContent = 'Enter a target battery % below current level.';
   document.getElementById('pct-go-btn').textContent = 'Export';
@@ -1794,7 +1804,8 @@ function renderSoeChart() {
     const inBucket = readings.filter(r => r.t >= start && r.t < end);
     buckets.push(inBucket.length ? inBucket.reduce((s, r) => s + r.pct, 0) / inBucket.length : null);
     const d = new Date(end);
-    labels.push(d.getMinutes() === 0 ? String(d.getHours()).padStart(2,'0')+':00' : '');
+    const prevD = new Date(now - (i + 1) * 30 * 60 * 1000);
+    labels.push(i === 47 || d.getHours() !== prevD.getHours() ? String(d.getHours()).padStart(2,'0')+':00' : '');
   }
   const filledBuckets = buckets.filter(b => b !== null).length;
   const hasData = filledBuckets > 0;
