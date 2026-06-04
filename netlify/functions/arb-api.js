@@ -79,6 +79,16 @@ exports.handler = async (event) => {
         await store.set('action_log', JSON.stringify(actionLog));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
+
+      if (body.action === 'save_timed_export') {
+        await store.set('timed_export', JSON.stringify({ endTime: body.endTime }));
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
+
+      if (body.action === 'clear_timed_export') {
+        await store.delete('timed_export');
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
     }
 
     return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Unknown request' }) };
