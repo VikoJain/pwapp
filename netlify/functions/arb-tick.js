@@ -129,6 +129,16 @@ exports.handler = async () => {
   const store = getStore({ name: 'arb', siteID: process.env.SITE_ID, token: process.env.NETLIFY_API_TOKEN });
   const state = JSON.parse(await store.get('state') || JSON.stringify(DEFAULT_STATE));
 
+  // Stop a timed export that expired while the app was backgrounded — runs regardless of arbitrage state
+  const timedExport = JSON.parse(await store.get('timed_export') || 'null');
+  if (timedExport && timedExport.endTime && Date.now() >= timedExport.endTime) {
+    const td = JSON.parse(await store.get('token') || 'null');
+    if (td) {
+      try { await setExport(td.access, td.apiBase, td.energySiteId, false); } catch (e) {}
+    }
+    await store.delete('timed_export');
+  }
+
   if (!state.enabled && state.phase === 0) return { statusCode: 200, body: 'Idle' };
 
   let tokenData = JSON.parse(await store.get('token') || 'null');
