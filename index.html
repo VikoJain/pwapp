@@ -364,9 +364,24 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <div><div class="settings-lbl">Start time</div><div class="settings-sub">When to begin charging</div></div>
           <input class="settings-inp" type="time" id="arb-start-time" value="23:30" />
         </div>
-        <div class="settings-row" style="border:none">
+        <div class="settings-row">
           <div><div class="settings-lbl">End time</div><div class="settings-sub">Return to normal operation</div></div>
           <input class="settings-inp" type="time" id="arb-end-time" value="05:30" />
+        </div>
+        <div style="font-size:11px;font-weight:600;color:#8e8e93;text-transform:uppercase;letter-spacing:.06em;margin:14px 0 2px">Car charging</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-lbl">Control car charging</div>
+            <div class="settings-sub" id="car-ctrl-sub">Stops charging in Phase 2, resumes in Phase 3</div>
+          </div>
+          <button class="toggle" id="car-ctrl-toggle" onclick="toggleCarCtrl()"></button>
+        </div>
+        <div class="settings-row" id="car-limit-row" style="display:none">
+          <div><div class="settings-lbl">Phase 3 charge limit</div><div class="settings-sub">Car charges to this % while Powerwall recharges</div></div>
+          <div style="display:flex;align-items:center;gap:4px"><input class="settings-inp" type="number" id="arb-car-limit" min="50" max="100" value="80" style="width:70px" /><span style="font-size:13px;color:#8e8e93">%</span></div>
+        </div>
+        <div class="settings-row" style="border:none" id="car-vehicle-row">
+          <div class="settings-lbl" style="color:#8e8e93;font-size:12px" id="car-vehicle-label">Reconnect Tesla to enable car control</div>
         </div>
         <button class="btn-primary" style="margin-top:10px" id="arb-settings-btn" onclick="saveArbSettings()">Save strategy</button>
         <div id="arb-settings-result" style="font-size:12px;margin-top:8px;min-height:16px"></div>
@@ -594,6 +609,8 @@ let state = {
   teslaToken: localStorage.getItem('tesla_token') || null,
   teslaRefresh: localStorage.getItem('tesla_refresh') || null,
   teslaExpiry: localStorage.getItem('tesla_expiry') || null,
+  vehicleId: localStorage.getItem('vehicle_id') || null,
+  vehicleName: localStorage.getItem('vehicle_name') || null,
   clientId: localStorage.getItem('tesla_client_id') || '',
   clientSecret: localStorage.getItem('tesla_client_secret') || '',
   redirectUri: localStorage.getItem('tesla_redirect_uri') || '',
@@ -742,6 +759,10 @@ async function restoreTokenFromServer() {
         localStorage.setItem('energy_site_id', data.energy_site_id);
         state.energySiteId = data.energy_site_id;
       }
+      if (data.vehicle_id) {
+        localStorage.setItem('vehicle_id', data.vehicle_id);
+        state.vehicleId = data.vehicle_id;
+      }
       if (data.api_base) {
         TESLA_API = data.api_base;
         localStorage.setItem('tesla_api', data.api_base);
@@ -784,6 +805,8 @@ async function discoverEnergySite() {
         state.energySiteId = site.energy_site_id;
         localStorage.setItem('energy_site_id', site.energy_site_id);
         localStorage.setItem('tesla_api', api);
+        // Also discover the vehicle (fire and forget — needs vehicle_device_data scope)
+        discoverVehicle().catch(() => {});
         // Save to server so it survives reinstall
         const deviceId = localStorage.getItem('device_id');
         if (deviceId) {
@@ -796,6 +819,27 @@ async function discoverEnergySite() {
       }
     } catch(e) { continue; }
   }
+}
+
+async function discoverVehicle() {
+  try {
+    const data = await teslaRequest('/api/1/vehicles');
+    const vehicles = data.response || [];
+    const v = vehicles.find(v => v.id);
+    if (!v) return null;
+    state.vehicleId = v.id_s || String(v.id);
+    state.vehicleName = v.display_name || v.vin || 'Tesla';
+    localStorage.setItem('vehicle_id', state.vehicleId);
+    localStorage.setItem('vehicle_name', state.vehicleName);
+    const deviceId = localStorage.getItem('device_id');
+    if (deviceId) {
+      fetch('/.netlify/functions/auth', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'save_site', device_id: deviceId, energy_site_id: state.energySiteId, api_base: TESLA_API, vehicle_id: state.vehicleId })
+      }).catch(() => {});
+    }
+    return v;
+  } catch(e) { return null; }
 }
 
 // ── Home page ─────────────────────────────────────────────
@@ -1362,14 +1406,40 @@ function populateArbSettings(settings) {
   if (ph5desc) ph5desc.textContent = endStr + ' · Autonomous mode, 0% reserve';
   if (schedSub) schedSub.textContent = 'Runs every night ' + startStr + ' – ' + endStr;
 
+  // Car control settings
+  const carCtrl = !!settings.carControlEnabled;
+  const carLimit = settings.carChargeLimit || 80;
+  const carToggle = document.getElementById('car-ctrl-toggle');
+  const carLimitRow = document.getElementById('car-limit-row');
+  const carLimitInput = document.getElementById('arb-car-limit');
+  const carVehicleLabel = document.getElementById('car-vehicle-label');
+  if (carToggle) carToggle.classList.toggle('on', carCtrl);
+  if (carLimitRow) carLimitRow.style.display = carCtrl ? 'flex' : 'none';
+  if (carLimitInput) carLimitInput.value = carLimit;
+  if (carVehicleLabel) {
+    carVehicleLabel.textContent = state.vehicleName
+      ? 'Car: ' + state.vehicleName
+      : 'Reconnect Tesla to enable car control';
+    carVehicleLabel.style.color = state.vehicleId ? '#34c759' : '#ff9500';
+  }
+
   // Also update the client-side monitor threshold
-  state.arbSettings = { chargeTargetPct: pct, startHour: sh, startMinute: sm, endHour: eh, endMinute: em };
+  state.arbSettings = { chargeTargetPct: pct, startHour: sh, startMinute: sm, endHour: eh, endMinute: em, carControlEnabled: carCtrl, carChargeLimit: carLimit };
+}
+
+function toggleCarCtrl() {
+  const btn = document.getElementById('car-ctrl-toggle');
+  btn.classList.toggle('on');
+  const on = btn.classList.contains('on');
+  document.getElementById('car-limit-row').style.display = on ? 'flex' : 'none';
 }
 
 async function saveArbSettings() {
   const pct = parseInt(document.getElementById('arb-charge-pct').value);
   const startTime = document.getElementById('arb-start-time').value;
   const endTime = document.getElementById('arb-end-time').value;
+  const carControlEnabled = document.getElementById('car-ctrl-toggle').classList.contains('on');
+  const carChargeLimit = parseInt(document.getElementById('arb-car-limit').value) || 80;
   if (isNaN(pct) || pct < 10 || pct > 90) {
     const r = document.getElementById('arb-settings-result');
     r.textContent = 'Charge % must be between 10 and 90.'; r.style.color = '#ff3b30'; return;
@@ -1382,9 +1452,9 @@ async function saveArbSettings() {
   try {
     await fetch('/.netlify/functions/arb-api', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save_arb_settings', chargeTargetPct: pct, startHour, startMinute, endHour, endMinute })
+      body: JSON.stringify({ action: 'save_arb_settings', chargeTargetPct: pct, startHour, startMinute, endHour, endMinute, carControlEnabled, carChargeLimit })
     });
-    populateArbSettings({ chargeTargetPct: pct, startHour, startMinute, endHour, endMinute });
+    populateArbSettings({ chargeTargetPct: pct, startHour, startMinute, endHour, endMinute, carControlEnabled, carChargeLimit });
     result.textContent = 'Strategy saved — takes effect on next cycle.';
     result.style.color = '#1a7f37';
     toast('Strategy settings saved');
