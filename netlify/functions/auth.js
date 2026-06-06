@@ -81,7 +81,8 @@ exports.handler = async (event) => {
           '&response_type=code' +
           '&scope=' + encodeURIComponent(SCOPE) +
           '&state=' + encodeURIComponent(state) +
-          '&audience=' + encodeURIComponent(API_BASE);
+          '&audience=' + encodeURIComponent(API_BASE) +
+          '&prompt=consent';
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ authUrl }) };
       }
 
