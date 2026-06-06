@@ -381,7 +381,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <div style="display:flex;align-items:center;gap:4px"><input class="settings-inp" type="number" id="arb-car-limit" min="50" max="100" value="80" style="width:70px" /><span style="font-size:13px;color:#8e8e93">%</span></div>
         </div>
         <div class="settings-row" style="border:none" id="car-vehicle-row">
-          <div class="settings-lbl" style="color:#8e8e93;font-size:12px" id="car-vehicle-label">Reconnect Tesla to enable car control</div>
+          <div class="settings-lbl" style="font-size:12px" id="car-vehicle-label">Reconnect Tesla to enable car control</div>
+          <button class="go-btn" style="font-size:12px;padding:7px 12px" onclick="findMyCar()">Find car</button>
         </div>
         <button class="btn-primary" style="margin-top:10px" id="arb-settings-btn" onclick="saveArbSettings()">Save strategy</button>
         <div id="arb-settings-result" style="font-size:12px;margin-top:8px;min-height:16px"></div>
@@ -1425,6 +1426,25 @@ function populateArbSettings(settings) {
 
   // Also update the client-side monitor threshold
   state.arbSettings = { chargeTargetPct: pct, startHour: sh, startMinute: sm, endHour: eh, endMinute: em, carControlEnabled: carCtrl, carChargeLimit: carLimit };
+}
+
+async function findMyCar() {
+  const label = document.getElementById('car-vehicle-label');
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = 'Searching…';
+  label.textContent = 'Looking for Tesla vehicle…';
+  label.style.color = '#8e8e93';
+  const v = await discoverVehicle();
+  if (v) {
+    label.textContent = 'Car: ' + (state.vehicleName || v.vin || 'Tesla');
+    label.style.color = '#34c759';
+    toast('Vehicle found: ' + (state.vehicleName || 'Tesla'));
+  } else {
+    label.textContent = 'No vehicle found — check Tesla is connected with vehicle scopes';
+    label.style.color = '#ff3b30';
+    toast('No vehicle found');
+  }
+  btn.disabled = false; btn.textContent = 'Find car';
 }
 
 function toggleCarCtrl() {
