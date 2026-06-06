@@ -122,6 +122,23 @@ async function getOctopusRate(store) {
   return 0;
 }
 
+async function wakeVehicle(token, apiBase, vehicleId) {
+  return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/wake_up`, {});
+}
+async function getVehicleState(token, apiBase, vehicleId) {
+  const data = await teslaGet(token, apiBase, `/api/1/vehicles/${vehicleId}`);
+  return data.response?.state || 'unknown';
+}
+async function vehicleChargeStop(token, apiBase, vehicleId) {
+  return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/command/charge_stop`, {});
+}
+async function vehicleSetChargeLimit(token, apiBase, vehicleId, percent) {
+  return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/command/set_charge_limit`, { percent });
+}
+async function vehicleChargeStart(token, apiBase, vehicleId) {
+  return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/command/charge_start`, {});
+}
+
 function fmt2(n) { return String(n).padStart(2, '0'); }
 
 exports.handler = async () => {
@@ -139,7 +156,11 @@ exports.handler = async () => {
     await store.delete('timed_export');
   }
 
-  if (!state.enabled && state.phase === 0) return { statusCode: 200, body: 'Idle' };
+  // Check for a pending vehicle command (retry each minute until car is online, timeout after 5 min)
+  const pendingCmd = JSON.parse(await store.get('pending_vehicle_cmd') || 'null');
+
+  // Only idle-exit if there's also no pending vehicle command to handle
+  if (!state.enabled && state.phase === 0 && !pendingCmd) return { statusCode: 200, body: 'Idle' };
 
   let tokenData = JSON.parse(await store.get('token') || 'null');
   if (!tokenData) return { statusCode: 200, body: 'No token stored' };
@@ -155,6 +176,37 @@ exports.handler = async () => {
         await store.set('token', JSON.stringify(tokenData));
       }
     } catch (e) { log(state, 'Token refresh error: ' + e.message); }
+  }
+
+  // Deliver any pending vehicle command (car may have been asleep when it was first requested)
+  if (pendingCmd && tokenData.vehicleId) {
+    const { access, apiBase } = tokenData;
+    const vehicleId = tokenData.vehicleId;
+    if (Date.now() - pendingCmd.requestedAt > 5 * 60 * 1000) {
+      log(state, 'Vehicle command timed out: ' + pendingCmd.cmd);
+      await store.delete('pending_vehicle_cmd');
+    } else {
+      try {
+        const vState = await getVehicleState(access, apiBase, vehicleId);
+        if (vState === 'online') {
+          if (pendingCmd.cmd === 'charge_stop') {
+            await vehicleChargeStop(access, apiBase, vehicleId);
+            log(state, 'Vehicle: charging stopped for Phase 2 export');
+          } else if (pendingCmd.cmd === 'charge_resume') {
+            await vehicleSetChargeLimit(access, apiBase, vehicleId, pendingCmd.chargeLimit);
+            await vehicleChargeStart(access, apiBase, vehicleId);
+            log(state, 'Vehicle: charging resumed at ' + pendingCmd.chargeLimit + '% limit');
+          }
+          await store.delete('pending_vehicle_cmd');
+        } else {
+          await wakeVehicle(access, apiBase, vehicleId);
+        }
+      } catch (e) {
+        log(state, 'Vehicle command error: ' + e.message);
+      }
+    }
+    await store.set('state', JSON.stringify(state));
+    if (!state.enabled && state.phase === 0) return { statusCode: 200, body: 'OK' };
   }
 
   // Load user-defined strategy settings, fall back to defaults if not set
@@ -190,6 +242,13 @@ exports.handler = async () => {
         await setMode(access, apiBase, siteId, 'autonomous', 0);
         await setExport(access, apiBase, siteId, true);
         log(state, 'Phase 2: Export enabled' + (rate > 0 ? ' at ' + rate.toFixed(1) + 'p/kWh' : ' (rate unavailable)'));
+        if (s.carControlEnabled && tokenData.vehicleId) {
+          try {
+            await wakeVehicle(access, apiBase, tokenData.vehicleId);
+            await store.set('pending_vehicle_cmd', JSON.stringify({ cmd: 'charge_stop', requestedAt: Date.now() }));
+            log(state, 'Vehicle: wake-up sent — charging will stop shortly');
+          } catch (e) { log(state, 'Vehicle wake error: ' + e.message); }
+        }
       }
     }
 
@@ -210,6 +269,14 @@ exports.handler = async () => {
         await setExport(access, apiBase, siteId, false);
         await setMode(access, apiBase, siteId, 'autonomous', 100);
         log(state, 'Phase 3: Export off — reserve set to 100%, recharging from grid');
+        if (s.carControlEnabled && tokenData.vehicleId) {
+          try {
+            await wakeVehicle(access, apiBase, tokenData.vehicleId);
+            const limit = s.carChargeLimit || 80;
+            await store.set('pending_vehicle_cmd', JSON.stringify({ cmd: 'charge_resume', chargeLimit: limit, requestedAt: Date.now() }));
+            log(state, 'Vehicle: wake-up sent — charging will resume to ' + limit + '% shortly');
+          } catch (e) { log(state, 'Vehicle wake error: ' + e.message); }
+        }
       }
     }
 
