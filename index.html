@@ -380,9 +380,19 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <div><div class="settings-lbl">Phase 3 charge limit</div><div class="settings-sub">Car charges to this % while Powerwall recharges</div></div>
           <div style="display:flex;align-items:center;gap:4px"><input class="settings-inp" type="number" id="arb-car-limit" min="50" max="100" value="80" style="width:70px" /><span style="font-size:13px;color:#8e8e93">%</span></div>
         </div>
-        <div class="settings-row" style="border:none" id="car-vehicle-row">
+        <div class="settings-row" id="car-vehicle-row">
           <div class="settings-lbl" style="font-size:12px" id="car-vehicle-label">Reconnect Tesla to enable car control</div>
           <button class="go-btn" style="font-size:12px;padding:7px 12px" onclick="findMyCar()">Find car</button>
+        </div>
+        <div class="settings-row" style="border:none" id="car-status-row" style="display:none">
+          <div>
+            <div class="settings-sub">Car battery</div>
+            <div class="settings-lbl" id="car-status-text">—</div>
+          </div>
+          <button class="refresh-btn" onclick="refreshCarStatus()">
+            <svg viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Refresh
+          </button>
         </div>
         <button class="btn-primary" style="margin-top:10px" id="arb-settings-btn" onclick="saveArbSettings()">Save strategy</button>
         <div id="arb-settings-result" style="font-size:12px;margin-top:8px;min-height:16px"></div>
@@ -1429,9 +1439,34 @@ function populateArbSettings(settings) {
       : 'Reconnect Tesla to enable car control';
     carVehicleLabel.style.color = state.vehicleId ? '#34c759' : '#ff9500';
   }
+  const carStatusRow = document.getElementById('car-status-row');
+  if (carStatusRow) {
+    carStatusRow.style.display = state.vehicleId ? 'flex' : 'none';
+    if (state.vehicleId) refreshCarStatus();
+  }
 
   // Also update the client-side monitor threshold
   state.arbSettings = { chargeTargetPct: pct, startHour: sh, startMinute: sm, endHour: eh, endMinute: em, carControlEnabled: carCtrl, carChargeLimit: carLimit };
+}
+
+async function refreshCarStatus() {
+  if (!state.vehicleId || !state.teslaToken) return;
+  const el = document.getElementById('car-status-text');
+  if (!el) return;
+  el.textContent = 'Loading…';
+  try {
+    const vData = await teslaRequest(`/api/1/vehicles/${state.vehicleId}`);
+    const vState = vData.response?.state;
+    if (vState === 'asleep') { el.textContent = 'Asleep'; return; }
+    if (vState === 'offline') { el.textContent = 'Offline'; return; }
+    const data = await teslaRequest(`/api/1/vehicles/${state.vehicleId}/vehicle_data`);
+    const cs = data.response?.charge_state;
+    if (!cs) { el.textContent = 'No data'; return; }
+    const batt = cs.battery_level ?? '—';
+    const chState = cs.charging_state || 'Unknown';
+    const power = cs.charger_power || 0;
+    el.textContent = batt + '% · ' + (chState === 'Charging' ? 'Charging at ' + power + ' kW' : chState === 'Complete' ? 'Fully charged' : chState === 'Disconnected' ? 'Not plugged in' : chState);
+  } catch(e) { el.textContent = 'Could not fetch'; }
 }
 
 async function findMyCar() {
