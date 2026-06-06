@@ -6,7 +6,7 @@ const REDIRECT_URI = process.env.TESLA_REDIRECT_URI;
 const AUTH_HOST = 'fleet-auth.prd.vn.cloud.tesla.com';
 const AUTH_PATH = '/oauth2/v3/token';
 const API_BASE = 'https://fleet-api.prd.eu.vn.cloud.tesla.com';
-const SCOPE = 'openid offline_access user_data energy_device_data energy_cmds vehicle_cmds vehicle_device_data';
+const SCOPE = 'openid offline_access user_data energy_device_data energy_cmds vehicle_device_data vehicle_charging_cmds';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
