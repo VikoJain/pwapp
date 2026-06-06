@@ -68,7 +68,8 @@ exports.handler = async (event) => {
           endHour: body.endHour !== undefined ? parseInt(body.endHour) : 5,
           endMinute: body.endMinute !== undefined ? parseInt(body.endMinute) : 30,
           carControlEnabled: !!body.carControlEnabled,
-          carChargeLimit: Math.min(100, Math.max(50, parseInt(body.carChargeLimit) || 80))
+          carChargeLimit: Math.min(100, Math.max(50, parseInt(body.carChargeLimit) || 80)),
+          carChargeLimitPhase2: Math.min(100, Math.max(50, parseInt(body.carChargeLimitPhase2) || 50))
         }));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
