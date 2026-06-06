@@ -190,8 +190,9 @@ exports.handler = async () => {
         const vState = await getVehicleState(access, apiBase, vehicleId);
         if (vState === 'online') {
           if (pendingCmd.cmd === 'charge_stop') {
+            await vehicleSetChargeLimit(access, apiBase, vehicleId, 50);
             await vehicleChargeStop(access, apiBase, vehicleId);
-            log(state, 'Vehicle: charging stopped for Phase 2 export');
+            log(state, 'Vehicle: charge limit set to 50%, charging stopped for Phase 2 export');
           } else if (pendingCmd.cmd === 'charge_resume') {
             await vehicleSetChargeLimit(access, apiBase, vehicleId, pendingCmd.chargeLimit);
             await vehicleChargeStart(access, apiBase, vehicleId);
