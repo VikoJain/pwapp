@@ -377,6 +377,10 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <button class="toggle" id="car-ctrl-toggle" onclick="toggleCarCtrl()"></button>
         </div>
         <div class="settings-row" id="car-limit-row" style="display:none">
+          <div><div class="settings-lbl">Phase 2 charge limit</div><div class="settings-sub">Car limit during Powerwall export (min 50%)</div></div>
+          <div style="display:flex;align-items:center;gap:4px"><input class="settings-inp" type="number" id="arb-car-limit-p2" min="50" max="100" value="50" style="width:70px" /><span style="font-size:13px;color:#8e8e93">%</span></div>
+        </div>
+        <div class="settings-row" id="car-limit-p3-row" style="display:none">
           <div><div class="settings-lbl">Phase 3 charge limit</div><div class="settings-sub">Car charges to this % while Powerwall recharges</div></div>
           <div style="display:flex;align-items:center;gap:4px"><input class="settings-inp" type="number" id="arb-car-limit" min="50" max="100" value="80" style="width:70px" /><span style="font-size:13px;color:#8e8e93">%</span></div>
         </div>
@@ -1426,13 +1430,18 @@ function populateArbSettings(settings) {
   // Car control settings
   const carCtrl = !!settings.carControlEnabled;
   const carLimit = settings.carChargeLimit || 80;
+  const carLimitP2 = settings.carChargeLimitPhase2 || 50;
   const carToggle = document.getElementById('car-ctrl-toggle');
   const carLimitRow = document.getElementById('car-limit-row');
+  const carLimitP3Row = document.getElementById('car-limit-p3-row');
   const carLimitInput = document.getElementById('arb-car-limit');
+  const carLimitP2Input = document.getElementById('arb-car-limit-p2');
   const carVehicleLabel = document.getElementById('car-vehicle-label');
   if (carToggle) carToggle.classList.toggle('on', carCtrl);
   if (carLimitRow) carLimitRow.style.display = carCtrl ? 'flex' : 'none';
+  if (carLimitP3Row) carLimitP3Row.style.display = carCtrl ? 'flex' : 'none';
   if (carLimitInput) carLimitInput.value = carLimit;
+  if (carLimitP2Input) carLimitP2Input.value = carLimitP2;
   if (carVehicleLabel) {
     carVehicleLabel.textContent = state.vehicleName
       ? 'Car: ' + state.vehicleName
@@ -1493,6 +1502,7 @@ function toggleCarCtrl() {
   btn.classList.toggle('on');
   const on = btn.classList.contains('on');
   document.getElementById('car-limit-row').style.display = on ? 'flex' : 'none';
+  document.getElementById('car-limit-p3-row').style.display = on ? 'flex' : 'none';
 }
 
 async function saveArbSettings() {
@@ -1501,6 +1511,7 @@ async function saveArbSettings() {
   const endTime = document.getElementById('arb-end-time').value;
   const carControlEnabled = document.getElementById('car-ctrl-toggle').classList.contains('on');
   const carChargeLimit = parseInt(document.getElementById('arb-car-limit').value) || 80;
+  const carChargeLimitPhase2 = Math.max(50, parseInt(document.getElementById('arb-car-limit-p2').value) || 50);
   if (isNaN(pct) || pct < 10 || pct > 90) {
     const r = document.getElementById('arb-settings-result');
     r.textContent = 'Charge % must be between 10 and 90.'; r.style.color = '#ff3b30'; return;
@@ -1513,9 +1524,9 @@ async function saveArbSettings() {
   try {
     await fetch('/.netlify/functions/arb-api', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save_arb_settings', chargeTargetPct: pct, startHour, startMinute, endHour, endMinute, carControlEnabled, carChargeLimit })
+      body: JSON.stringify({ action: 'save_arb_settings', chargeTargetPct: pct, startHour, startMinute, endHour, endMinute, carControlEnabled, carChargeLimit, carChargeLimitPhase2 })
     });
-    populateArbSettings({ chargeTargetPct: pct, startHour, startMinute, endHour, endMinute, carControlEnabled, carChargeLimit });
+    populateArbSettings({ chargeTargetPct: pct, startHour, startMinute, endHour, endMinute, carControlEnabled, carChargeLimit, carChargeLimitPhase2 });
     result.textContent = 'Strategy saved — takes effect on next cycle.';
     result.style.color = '#1a7f37';
     toast('Strategy settings saved');
