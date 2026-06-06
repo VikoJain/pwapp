@@ -463,6 +463,12 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <div class="dev-test-result" id="dt-p3-result"></div>
         </div>
         <div class="dev-test-row">
+          <div class="dev-test-label">Test V — Vehicle API</div>
+          <div class="dev-test-sub">Calls /api/1/vehicles and shows the raw response. Use this to debug vehicle discovery.</div>
+          <button class="dev-test-btn" onclick="devTestVehicle()">Run</button>
+          <div class="dev-test-result" id="dtv-result"></div>
+        </div>
+        <div class="dev-test-row">
           <div class="dev-test-label">Test 1 — Read battery status</div>
           <div class="dev-test-sub">Shows battery %, charge/discharge rate, grid flow and mode.</div>
           <button class="dev-test-btn" id="dt1-btn" onclick="devTest1()">Run</button>
@@ -1643,6 +1649,16 @@ function devDone(n, msg, ok) {
   const btn = document.getElementById('dt'+n+'-btn');
   if (el) { el.textContent = msg; el.style.color = ok ? '#34c759' : '#ff3b30'; }
   if (btn) btn.disabled = false;
+}
+
+async function devTestVehicle() {
+  const el = document.getElementById('dtv-result');
+  el.textContent = 'Calling /api/1/vehicles…'; el.style.color = '#8e8e93';
+  try {
+    const data = await teslaRequest('/api/1/vehicles');
+    el.textContent = JSON.stringify(data, null, 2);
+    el.style.color = (data.response && data.response.length) ? '#34c759' : '#ff3b30';
+  } catch(e) { el.textContent = 'Error: ' + e.message; el.style.color = '#ff3b30'; }
 }
 
 async function devTest1() {
