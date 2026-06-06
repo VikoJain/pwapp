@@ -190,9 +190,9 @@ exports.handler = async () => {
         const vState = await getVehicleState(access, apiBase, vehicleId);
         if (vState === 'online') {
           if (pendingCmd.cmd === 'charge_stop') {
-            await vehicleSetChargeLimit(access, apiBase, vehicleId, 50);
+            await vehicleSetChargeLimit(access, apiBase, vehicleId, pendingCmd.chargeLimit || 50);
             await vehicleChargeStop(access, apiBase, vehicleId);
-            log(state, 'Vehicle: charge limit set to 50%, charging stopped for Phase 2 export');
+            log(state, 'Vehicle: charge limit set to ' + (pendingCmd.chargeLimit || 50) + '%, charging stopped for Phase 2 export');
           } else if (pendingCmd.cmd === 'charge_resume') {
             await vehicleSetChargeLimit(access, apiBase, vehicleId, pendingCmd.chargeLimit);
             await vehicleChargeStart(access, apiBase, vehicleId);
@@ -246,7 +246,7 @@ exports.handler = async () => {
         if (s.carControlEnabled && tokenData.vehicleId) {
           try {
             await wakeVehicle(access, apiBase, tokenData.vehicleId);
-            await store.set('pending_vehicle_cmd', JSON.stringify({ cmd: 'charge_stop', requestedAt: Date.now() }));
+            await store.set('pending_vehicle_cmd', JSON.stringify({ cmd: 'charge_stop', chargeLimit: s.carChargeLimitPhase2 || 50, requestedAt: Date.now() }));
             log(state, 'Vehicle: wake-up sent — charging will stop shortly');
           } catch (e) { log(state, 'Vehicle wake error: ' + e.message); }
         }
