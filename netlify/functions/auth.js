@@ -6,7 +6,7 @@ const REDIRECT_URI = process.env.TESLA_REDIRECT_URI;
 const AUTH_HOST = 'fleet-auth.prd.vn.cloud.tesla.com';
 const AUTH_PATH = '/oauth2/v3/token';
 const API_BASE = 'https://fleet-api.prd.eu.vn.cloud.tesla.com';
-const SCOPE = 'openid offline_access user_data energy_device_data energy_cmds';
+const SCOPE = 'openid offline_access user_data energy_device_data energy_cmds vehicle_cmds vehicle_device_data';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -49,7 +49,8 @@ async function updateArbToken(store, tok) {
       expiry: tok.expiry,
       clientId: CLIENT_ID,
       apiBase: tok.apiBase || API_BASE,
-      energySiteId: tok.energySiteId || null
+      energySiteId: tok.energySiteId || null,
+      vehicleId: tok.vehicleId || null
     }));
   } catch (e) {}
 }
@@ -108,6 +109,7 @@ exports.handler = async (event) => {
           refresh_token: tok.refresh,
           expiry: tok.expiry,
           energy_site_id: tok.energySiteId || null,
+          vehicle_id: tok.vehicleId || null,
           api_base: tok.apiBase || API_BASE
         })};
       }
@@ -156,13 +158,14 @@ exports.handler = async (event) => {
 
       // Save energy site ID after client-side discovery
       if (body.action === 'save_site') {
-        const { device_id, energy_site_id, api_base } = body;
+        const { device_id, energy_site_id, api_base, vehicle_id } = body;
         if (!device_id) return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Missing device_id' }) };
         const raw = await store.get('device_' + device_id);
         if (raw) {
           const tok = JSON.parse(raw);
           tok.energySiteId = energy_site_id;
           if (api_base) tok.apiBase = api_base;
+          if (vehicle_id) tok.vehicleId = vehicle_id;
           await store.set('device_' + device_id, JSON.stringify(tok));
           await updateArbToken(store, tok);
         }
