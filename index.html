@@ -1655,8 +1655,17 @@ async function devTestVehicle() {
   const el = document.getElementById('dtv-result');
   el.textContent = 'Calling /api/1/vehicles…'; el.style.color = '#8e8e93';
   try {
+    // Decode the JWT to show what scopes Tesla actually granted
+    const token = state.teslaToken;
+    let grantedScopes = 'Could not decode token';
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        grantedScopes = (payload.scp || payload.scope || []).join ? (payload.scp || payload.scope || []).join(', ') : String(payload.scp || payload.scope || 'none');
+      } catch(e) { grantedScopes = 'decode error: ' + e.message; }
+    }
     const data = await teslaRequest('/api/1/vehicles');
-    el.textContent = JSON.stringify(data, null, 2);
+    el.textContent = 'Granted scopes: ' + grantedScopes + '\n\n' + JSON.stringify(data, null, 2);
     el.style.color = (data.response && data.response.length) ? '#34c759' : '#ff3b30';
   } catch(e) { el.textContent = 'Error: ' + e.message; el.style.color = '#ff3b30'; }
 }
