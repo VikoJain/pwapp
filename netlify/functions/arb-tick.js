@@ -238,11 +238,13 @@ exports.handler = async () => {
         log(state, 'Phase 1 complete — battery reached ' + pct + '%');
         state.phase = 2;
         const rate = await getOctopusRate(store);
-        state.stats.rate = rate;
         state.stats.phase2StartPct = pct;
+        state.stats.rateSum = rate;
+        state.stats.rateSamples = rate > 0 ? 1 : 0;
+        state.stats.rate = rate;
         await setMode(access, apiBase, siteId, 'autonomous', 0);
         await setExport(access, apiBase, siteId, true);
-        log(state, 'Phase 2: Export enabled' + (rate > 0 ? ' at ' + rate.toFixed(1) + 'p/kWh' : ' (rate unavailable)'));
+        log(state, 'Phase 2: Export enabled' + (rate > 0 ? ' at ' + rate.toFixed(1) + 'p/kWh' : ' (rate unavailable — will retry)'));
         if (s.carControlEnabled && tokenData.vehicleId) {
           try {
             await wakeVehicle(access, apiBase, tokenData.vehicleId);
@@ -257,15 +259,23 @@ exports.handler = async () => {
     else if (state.phase === 2) {
       const live = await teslaGet(access, apiBase, `/api/1/energy_sites/${siteId}/live_status`);
       const pct = Math.round(live.response?.percentage_charged || 0);
-      if (m % 10 === 0) log(state, 'Phase 2 exporting — battery at ' + pct + '%');
+      // Update running average rate on every tick to handle multiple 30-min Agile slots
+      const tickRate = await getOctopusRate(store);
+      if (tickRate > 0) {
+        state.stats.rateSum = (state.stats.rateSum || 0) + tickRate;
+        state.stats.rateSamples = (state.stats.rateSamples || 0) + 1;
+        state.stats.rate = parseFloat((state.stats.rateSum / state.stats.rateSamples).toFixed(2));
+      }
+      if (m % 10 === 0) log(state, 'Phase 2 exporting — battery at ' + pct + '%' + (state.stats.rate > 0 ? ' @ ' + state.stats.rate.toFixed(1) + 'p avg' : ''));
       if (pct <= 2) {
         log(state, 'Phase 2 complete — battery at ' + pct + '%');
         const startPct = state.stats.phase2StartPct || chargeTargetPct;
         const kwhExported = parseFloat(((startPct - pct) / 100 * 13.5).toFixed(2));
-        const earned = parseFloat((kwhExported * (state.stats.rate || 0) / 100).toFixed(2));
+        const avgRate = state.stats.rate || 0;
+        const earned = parseFloat((kwhExported * avgRate / 100).toFixed(2));
         state.stats.kwh = kwhExported;
         state.stats.earned = earned;
-        log(state, 'Est. £' + earned.toFixed(2) + ' earned (' + kwhExported + ' kWh @ ' + (state.stats.rate || 0).toFixed(1) + 'p)');
+        log(state, 'Est. £' + earned.toFixed(2) + ' earned (' + kwhExported + ' kWh @ ' + avgRate.toFixed(1) + 'p avg)');
         state.phase = 3;
         await setExport(access, apiBase, siteId, false);
         await setMode(access, apiBase, siteId, 'autonomous', 100);
