@@ -21,6 +21,10 @@ exports.handler = async (event) => {
         const settings = JSON.parse(await store.get('oct_settings') || 'null');
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ settings }) };
       }
+      if (event.queryStringParameters && event.queryStringParameters.type === 'soe_history') {
+        const soeHistory = JSON.parse(await store.get('soe_history') || '[]');
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ soeHistory }) };
+      }
       const arbSettings = JSON.parse(await store.get('arb_settings') || 'null');
       return { statusCode: 200, headers: CORS, body: JSON.stringify({ ...state, arbSettings }) };
     }
