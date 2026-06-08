@@ -160,14 +160,6 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 .arb-earn-card{background:#f2f2f7;border-radius:11px;padding:10px 8px;text-align:center}
 .arb-earn-val{font-size:16px;font-weight:700;color:#34c759}
 .arb-earn-lbl{font-size:10px;color:#8e8e93;margin-top:2px}
-.log-box{background:#f2f2f7;border-radius:10px;padding:10px 12px;font-size:11px;color:#3c3c43;font-family:monospace;max-height:120px;overflow-y:auto;margin-top:4px;line-height:1.6}
-.dev-test-row{padding:10px 0;border-bottom:1px solid #f2f2f7}
-.dev-test-row:last-child{border:none}
-.dev-test-label{font-size:13px;font-weight:500;margin-bottom:6px}
-.dev-test-sub{font-size:11px;color:#8e8e93;margin-bottom:6px}
-.dev-test-btn{padding:7px 16px;border-radius:9px;background:#007aff;color:#fff;font-size:13px;font-weight:600;cursor:pointer;border:none}
-.dev-test-btn:disabled{background:#c7c7cc;cursor:not-allowed}
-.dev-test-result{font-size:12px;font-family:monospace;margin-top:6px;min-height:16px;word-break:break-all;line-height:1.5}
 </style>
 </head>
 <body>
@@ -340,11 +332,6 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
     <!-- ARBITRAGE PAGE -->
     <div class="page" id="page-arb">
       <div class="card">
-        <div class="arb-hero">
-          <div class="arb-status-circle idle" id="arb-circle">💤</div>
-          <div class="arb-phase-name" id="arb-phase-name">Arbitrage idle</div>
-          <div class="arb-phase-sub" id="arb-phase-sub">Enable to start tonight's cycle at 11:30pm</div>
-        </div>
         <div class="arb-toggle-row">
           <div>
             <div class="arb-toggle-lbl">Overnight arbitrage</div>
@@ -457,62 +444,6 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         </div>
       </div>
 
-      <div class="card">
-        <div class="card-title">Activity log</div>
-        <div class="log-box" id="arb-log">No activity yet.</div>
-      </div>
-
-      <div class="card" id="dev-test-card">
-        <div class="card-title">Developer tests</div>
-        <div class="dev-test-row">
-          <div class="dev-test-label">Quick test run — all phases (1–5)</div>
-          <div class="dev-test-sub">Runs the full cycle now with compressed thresholds (75%→65%→70%) and 10s polling. Watch the activity log. Takes ~20 min.</div>
-          <button class="dev-test-btn" style="background:#ff9500" onclick="devTestFullRun()">Run full cycle</button>
-          <div class="dev-test-result" id="dt-full-result"></div>
-        </div>
-        <div class="dev-test-row">
-          <div class="dev-test-label">Quick test run — Phase 3 to 5 only</div>
-          <div class="dev-test-sub">Jumps into Phase 3 (reserve 100%, recharge to 70%), then Phase 4 (2 min standby), then Phase 5. Battery should be below 70%.</div>
-          <button class="dev-test-btn" style="background:#ff9500" onclick="devTestPhase3to5()">Run Phase 3–5</button>
-          <div class="dev-test-result" id="dt-p3-result"></div>
-        </div>
-        <div class="dev-test-row">
-          <div class="dev-test-label">Test V — Vehicle API</div>
-          <div class="dev-test-sub">Calls /api/1/vehicles and shows the raw response. Use this to debug vehicle discovery.</div>
-          <button class="dev-test-btn" onclick="devTestVehicle()">Run</button>
-          <div class="dev-test-result" id="dtv-result"></div>
-        </div>
-        <div class="dev-test-row">
-          <div class="dev-test-label">Test 1 — Read battery status</div>
-          <div class="dev-test-sub">Shows battery %, charge/discharge rate, grid flow and mode.</div>
-          <button class="dev-test-btn" id="dt1-btn" onclick="devTest1()">Run</button>
-          <div class="dev-test-result" id="dt1-result"></div>
-        </div>
-        <div class="dev-test-row">
-          <div class="dev-test-label">Test 2 — Simulate Phase 1 (reserve 70%)</div>
-          <div class="dev-test-sub">Sets autonomous mode, reserve 70%. Battery should charge from grid to 70%.</div>
-          <button class="dev-test-btn" id="dt2-btn" onclick="devTest2()">Run</button>
-          <div class="dev-test-result" id="dt2-result"></div>
-        </div>
-        <div class="dev-test-row">
-          <div class="dev-test-label">Test 3 — Simulate Phase 2 (reserve 0% + export on)</div>
-          <div class="dev-test-sub">Sets reserve 0% and enables export. Battery should discharge and export to grid.</div>
-          <button class="dev-test-btn" id="dt3-btn" onclick="devTest3()">Run</button>
-          <div class="dev-test-result" id="dt3-result"></div>
-        </div>
-        <div class="dev-test-row">
-          <div class="dev-test-label">Test 4 — Simulate Phase 3 (export off + reserve 100%)</div>
-          <div class="dev-test-sub">Disables export and sets reserve 100%. Battery should recharge from grid at full rate.</div>
-          <button class="dev-test-btn" id="dt4-btn" onclick="devTest4()">Run</button>
-          <div class="dev-test-result" id="dt4-result"></div>
-        </div>
-        <div class="dev-test-row">
-          <div class="dev-test-label">Test 5 — Restore normal (reserve 0%)</div>
-          <div class="dev-test-sub">Disables export and sets reserve 0%. Returns to normal daily operation.</div>
-          <button class="dev-test-btn" id="dt5-btn" onclick="devTest5()">Run</button>
-          <div class="dev-test-result" id="dt5-result"></div>
-        </div>
-      </div>
     </div>
 
     <!-- HEALTH PAGE -->
@@ -653,7 +584,6 @@ let state = {
   arbStats: JSON.parse(localStorage.getItem('arb_stats') || '{"kwh":0,"rate":0,"earned":0}'),
   arbExportStartPct: 0,
   normalTariff: JSON.parse(localStorage.getItem('arb_normal_tariff') || 'null'),
-  arbTestMode: false,
   arbSettings: null,
 };
 
@@ -1275,11 +1205,6 @@ async function pollServerStatus() {
     if (data.stats) state.arbStats = data.stats;
     // Sync strategy settings to the UI
     if (data.arbSettings) populateArbSettings(data.arbSettings);
-    // Update log display
-    const logEl = document.getElementById('arb-log');
-    if (logEl && data.log && data.log.length) {
-      logEl.innerHTML = data.log.join('<br>');
-    }
     renderArbUI();
   } catch(e) {}
 }
@@ -1352,24 +1277,8 @@ function setArbPhase(phase) {
 }
 
 function renderArbUI() {
-  const circle = document.getElementById('arb-circle');
-  const phaseName = document.getElementById('arb-phase-name');
-  const phaseSub = document.getElementById('arb-phase-sub');
   const toggle = document.getElementById('arb-main-toggle');
   toggle.classList.toggle('on', state.arbEnabled);
-
-  const phases = [
-    {icon:'💤',name:'Arbitrage idle',sub:'Enable to start tonight\'s cycle at 11:30pm',cls:'idle'},
-    {icon:'⚡',name:'Phase 1 — Charging',sub:'Reserve at 50%, charging from grid',cls:'phase1'},
-    {icon:'📤',name:'Phase 2 — Exporting',sub:'Reserve 0%, exporting to grid',cls:'phase2'},
-    {icon:'🔋',name:'Phase 3 — Recharging',sub:'Reserve 100%, recharging from grid at full rate',cls:'phase3'},
-    {icon:'😴',name:'Phase 4 — Standby',sub:'Fully charged, waiting for 5:30am',cls:'phase4'},
-  ];
-  const p = phases[state.arbPhase] || phases[0];
-  circle.className = 'arb-status-circle '+p.cls;
-  circle.textContent = p.icon;
-  phaseName.textContent = p.name;
-  phaseSub.textContent = p.sub;
 
   // Phase statuses
   const statuses = ['ph1-status','ph2-status','ph3-status','ph4-status','ph5-status'];
@@ -1384,15 +1293,11 @@ function renderArbUI() {
     else { el.textContent='Waiting'; el.className='phase-status waiting'; }
   });
 
-  // Stats
+  // Stats — use > 0 check so a stored zero doesn't mask a missing value
   const stats = state.arbStats;
-  document.getElementById('arb-kwh').textContent = stats.kwh ? stats.kwh.toFixed(1) : '—';
-  document.getElementById('arb-rate').textContent = stats.rate ? stats.rate.toFixed(1)+'p' : '—p';
-  document.getElementById('arb-earned').textContent = stats.earned ? '£'+stats.earned.toFixed(2) : '£—';
-
-  // Log
-  const logEl = document.getElementById('arb-log');
-  if (logEl) logEl.innerHTML = state.arbLog.join('<br>') || 'No activity yet.';
+  document.getElementById('arb-kwh').textContent = stats.kwh > 0 ? stats.kwh.toFixed(1) : '—';
+  document.getElementById('arb-rate').textContent = stats.rate > 0 ? stats.rate.toFixed(1)+'p' : '—p';
+  document.getElementById('arb-earned').textContent = stats.earned > 0 ? '£'+stats.earned.toFixed(2) : '£—';
 }
 
 function fmt2(n) { return String(n).padStart(2, '0'); }
@@ -1584,10 +1489,7 @@ async function startArbCycle() {
 
 function startArbMonitor() {
   if (state.arbMonitorTimer) clearInterval(state.arbMonitorTimer);
-  const interval = state.arbTestMode ? 10000 : 60000;
-  const fullPct  = state.arbTestMode ? 75 : (state.arbSettings ? state.arbSettings.chargeTargetPct : 50);
-  const emptyPct = state.arbTestMode ? 65 : 2;
-  const rechargePct = state.arbTestMode ? 70 : 98;
+  const fullPct = state.arbSettings ? state.arbSettings.chargeTargetPct : 50;
   state.arbMonitorTimer = setInterval(async () => {
     if (!state.arbEnabled) { clearInterval(state.arbMonitorTimer); return; }
     try {
@@ -1600,25 +1502,25 @@ function startArbMonitor() {
         arbLog('Phase 1 complete — battery at '+pct+'%');
         await startArbPhase2(data.response);
       }
-      else if (state.arbPhase === 2 && pct <= emptyPct) {
+      else if (state.arbPhase === 2 && pct <= 2) {
         arbLog('Phase 2 complete — battery at '+pct+'%');
         await startArbPhase3();
       }
-      else if (state.arbPhase === 3 && pct >= rechargePct) {
+      else if (state.arbPhase === 3 && pct >= 98) {
         arbLog('Phase 3 complete — battery at '+pct+'%');
         await startArbPhase4();
       }
-      else if (state.arbPhase === 4 && !state.arbTestMode && h === 5 && m >= 30) {
+      else if (state.arbPhase === 4 && h === 5 && m >= 30) {
         await startArbPhase5();
       }
-      else if (state.arbPhase > 0 && !state.arbTestMode && h >= 6) {
+      else if (state.arbPhase > 0 && h >= 6) {
         arbLog('Safety fallback — returning to normal mode');
         await startArbPhase5();
       }
 
       renderArbUI();
     } catch(e) { arbLog('Monitor error: '+e.message); }
-  }, interval);
+  }, 60000);
 }
 
 async function startArbPhase2(liveData) {
@@ -1656,14 +1558,8 @@ async function startArbPhase3() {
 
 async function startArbPhase4() {
   setArbPhase(4);
-  if (state.arbTestMode) {
-    arbLog('Phase 4: Test mode — advancing to Phase 5 in 2 minutes');
-    toast('Arbitrage: Phase 4 — test standby, 2 min');
-    setTimeout(() => startArbPhase5(), 120000);
-  } else {
-    arbLog('Phase 4: Fully charged — standby until 5:30am');
-    toast('Arbitrage: Phase 4 — standby, waiting for 5:30am');
-  }
+  arbLog('Phase 4: Fully charged — standby until 5:30am');
+  toast('Arbitrage: Phase 4 — standby, waiting for 5:30am');
 }
 
 async function startArbPhase5() {
@@ -1673,119 +1569,11 @@ async function startArbPhase5() {
   try {
     await setExportMode(false);
     await setOperationMode('autonomous', 0);
-    const testLabel = state.arbTestMode ? ' (TEST RUN)' : '';
-    state.arbTestMode = false;
-    arbLog('=== Cycle complete'+testLabel+' — autonomous mode restored, 0% reserve ===');
+    arbLog('=== Cycle complete — autonomous mode restored, 0% reserve ===');
     toast('Arbitrage cycle complete! £'+state.arbStats.earned.toFixed(2)+' earned');
     scheduleArbitrage();
     renderArbUI();
   } catch(e) { arbLog('Phase 5 error: '+e.message); }
-}
-
-// ── Developer tests ───────────────────────────────────────
-function devSetRunning(n) {
-  const el = document.getElementById('dt'+n+'-result');
-  const btn = document.getElementById('dt'+n+'-btn');
-  if (el) { el.textContent = 'Running...'; el.style.color = '#8e8e93'; }
-  if (btn) btn.disabled = true;
-  return el;
-}
-function devDone(n, msg, ok) {
-  const el = document.getElementById('dt'+n+'-result');
-  const btn = document.getElementById('dt'+n+'-btn');
-  if (el) { el.textContent = msg; el.style.color = ok ? '#34c759' : '#ff3b30'; }
-  if (btn) btn.disabled = false;
-}
-
-async function devTestVehicle() {
-  const el = document.getElementById('dtv-result');
-  el.textContent = 'Calling /api/1/vehicles…'; el.style.color = '#8e8e93';
-  try {
-    // Decode the JWT to show what scopes Tesla actually granted
-    const token = state.teslaToken;
-    let grantedScopes = 'Could not decode token';
-    if (token) {
-      try {
-        const payload = JSON.parse(atob(token.split('.')[1]));
-        grantedScopes = (payload.scp || payload.scope || []).join ? (payload.scp || payload.scope || []).join(', ') : String(payload.scp || payload.scope || 'none');
-      } catch(e) { grantedScopes = 'decode error: ' + e.message; }
-    }
-    const data = await teslaRequest('/api/1/vehicles');
-    el.textContent = 'Granted scopes: ' + grantedScopes + '\n\n' + JSON.stringify(data, null, 2);
-    el.style.color = (data.response && data.response.length) ? '#34c759' : '#ff3b30';
-  } catch(e) { el.textContent = 'Error: ' + e.message; el.style.color = '#ff3b30'; }
-}
-
-async function devTest1() {
-  const el = devSetRunning(1);
-  try {
-    const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
-    const r = data.response;
-    const pct = Math.round(r.percentage_charged);
-    const mode = r.operation;
-    const battW = r.battery_power || 0;
-    const gridW = r.grid_power || 0;
-    const battStatus = battW < 0 ? `charging ${(Math.abs(battW)/1000).toFixed(2)}kW` : battW > 0 ? `discharging ${(battW/1000).toFixed(2)}kW` : 'idle';
-    const gridStatus = gridW < 0 ? `exporting ${(Math.abs(gridW)/1000).toFixed(2)}kW` : gridW > 0 ? `importing ${(gridW/1000).toFixed(2)}kW` : 'grid 0kW';
-    devDone(1, `Battery: ${pct}% · ${battStatus} · ${gridStatus} · Mode: ${mode}`, true);
-  } catch(e) { devDone(1, 'Error: '+e.message, false); }
-}
-async function devTestPhase3to5() {
-  const el = document.getElementById('dt-p3-result');
-  if (!state.teslaToken || !state.energySiteId) { el.textContent = 'Error: connect Tesla first'; el.style.color='#ff3b30'; return; }
-  el.textContent = 'Phase 3 started — watch the activity log'; el.style.color = '#ff9500';
-  state.arbTestMode = true;
-  state.arbEnabled = true;
-  state.arbStats = {kwh:0, rate:0, earned:0};
-  await startArbPhase3();
-  startArbMonitor();
-}
-async function devTestFullRun() {
-  const el = document.getElementById('dt-full-result');
-  if (!state.teslaToken) { el.textContent = 'Error: connect Tesla first'; el.style.color='#ff3b30'; return; }
-  if (!state.energySiteId) { el.textContent = 'Error: no energy site found'; el.style.color='#ff3b30'; return; }
-  el.textContent = 'Test cycle started — watch the activity log'; el.style.color = '#ff9500';
-  state.arbTestMode = true;
-  state.arbEnabled = true;
-  await startArbCycle();
-}
-async function devTest2() {
-  devSetRunning(2);
-  try {
-    const r = await setOperationMode('autonomous', 70);
-    devDone(2, 'Phase 1: Reserve set to 70% — '+JSON.stringify(r?.response?.Message || r), true);
-  } catch(e) { devDone(2, 'Error: '+e.message, false); }
-}
-async function devTest3() {
-  devSetRunning(3);
-  try {
-    await setOperationMode('autonomous', 0);
-    await setExportMode(true);
-    document.getElementById('dt3-result').textContent = 'Phase 2: Reserve 0% + export on — verifying in 10s...';
-    document.getElementById('dt3-result').style.color = '#8e8e93';
-    await new Promise(res => setTimeout(res, 10000));
-    const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
-    const gridW = data.response.grid_power || 0;
-    const battW = data.response.battery_power || 0;
-    const exporting = gridW < 0;
-    devDone(3, `Battery: ${battW > 0 ? 'discharging '+(battW/1000).toFixed(2)+'kW' : 'idle'} · Grid: ${exporting ? 'exporting '+(Math.abs(gridW)/1000).toFixed(2)+'kW' : (gridW/1000).toFixed(2)+'kW'}`, exporting);
-  } catch(e) { devDone(3, 'Error: '+e.message, false); }
-}
-async function devTest4() {
-  devSetRunning(4);
-  try {
-    await setExportMode(false);
-    const r = await setOperationMode('autonomous', 100);
-    devDone(4, 'Phase 3: Export off + reserve 100% — '+JSON.stringify(r?.response?.Message || r), true);
-  } catch(e) { devDone(4, 'Error: '+e.message, false); }
-}
-async function devTest5() {
-  devSetRunning(5);
-  try {
-    await setExportMode(false);
-    const r = await setOperationMode('autonomous', 0);
-    devDone(5, 'Normal restored: export off, reserve 0% — '+JSON.stringify(r?.response?.Message || r), true);
-  } catch(e) { devDone(5, 'Error: '+e.message, false); }
 }
 
 // ── Health ────────────────────────────────────────────────
