@@ -97,7 +97,6 @@ async function setExport(token, apiBase, siteId, enable) {
   });
 }
 
-// Fetches the current Agile export rate from Octopus using settings stored in the blob store
 async function getOctopusRate(store) {
   try {
     const settings = JSON.parse(await store.get('oct_settings') || 'null');
@@ -145,28 +144,11 @@ exports.handler = async () => {
   const { getStore } = require('@netlify/blobs');
   const store = getStore({ name: 'arb', siteID: process.env.SITE_ID, token: process.env.NETLIFY_API_TOKEN });
   const state = JSON.parse(await store.get('state') || JSON.stringify(DEFAULT_STATE));
-
-  // Stop a timed export that expired while the app was backgrounded — runs regardless of arbitrage state
-  const timedExport = JSON.parse(await store.get('timed_export') || 'null');
-  if (timedExport && timedExport.endTime && Date.now() >= timedExport.endTime) {
-    const td = JSON.parse(await store.get('token') || 'null');
-    if (td) {
-      try { await setExport(td.access, td.apiBase, td.energySiteId, false); } catch (e) {}
-    }
-    await store.delete('timed_export');
-  }
-
-  // Check for a pending vehicle command (retry each minute until car is online, timeout after 5 min)
   const pendingCmd = JSON.parse(await store.get('pending_vehicle_cmd') || 'null');
 
-  // Only idle-exit if there's also no pending vehicle command to handle
-  if (!state.enabled && state.phase === 0 && !pendingCmd) return { statusCode: 200, body: 'Idle' };
-
+  // Load and optionally refresh the Tesla token (needed for SOE collection + arbitrage)
   let tokenData = JSON.parse(await store.get('token') || 'null');
-  if (!tokenData) return { statusCode: 200, body: 'No token stored' };
-
-  // Refresh token if expiring within 2 minutes
-  if (tokenData.expiry && Date.now() > tokenData.expiry - 120000) {
+  if (tokenData && tokenData.expiry && Date.now() > tokenData.expiry - 120000) {
     try {
       const refreshed = await refreshTeslaToken(tokenData);
       if (refreshed.access_token) {
@@ -178,8 +160,34 @@ exports.handler = async () => {
     } catch (e) { log(state, 'Token refresh error: ' + e.message); }
   }
 
-  // Deliver any pending vehicle command (car may have been asleep when it was first requested)
-  if (pendingCmd && tokenData.vehicleId) {
+  // Stop a timed export that expired while the app was backgrounded
+  const timedExport = JSON.parse(await store.get('timed_export') || 'null');
+  if (timedExport && timedExport.endTime && Date.now() >= timedExport.endTime) {
+    if (tokenData) {
+      try { await setExport(tokenData.access, tokenData.apiBase, tokenData.energySiteId, false); } catch (e) {}
+    }
+    await store.delete('timed_export');
+  }
+
+  // Always fetch live battery status — records SOE history every minute regardless of arbitrage state,
+  // and provides the current % for phase logic (avoids a duplicate API call during active phases)
+  let currentPct = -1;
+  if (tokenData) {
+    try {
+      const live = await teslaGet(tokenData.access, tokenData.apiBase,
+        `/api/1/energy_sites/${tokenData.energySiteId}/live_status`);
+      currentPct = Math.round(live.response?.percentage_charged ?? -1);
+      if (currentPct >= 0) {
+        const soeHistory = JSON.parse(await store.get('soe_history') || '[]');
+        soeHistory.push({ t: Date.now(), pct: currentPct });
+        const cutoff = Date.now() - 6 * 24 * 3600 * 1000;
+        await store.set('soe_history', JSON.stringify(soeHistory.filter(r => r.t > cutoff)));
+      }
+    } catch (e) { /* non-fatal — arbitrage continues with currentPct = -1 */ }
+  }
+
+  // Deliver any pending vehicle command (car may have been asleep when first requested)
+  if (pendingCmd && tokenData && tokenData.vehicleId) {
     const { access, apiBase } = tokenData;
     const vehicleId = tokenData.vehicleId;
     if (Date.now() - pendingCmd.requestedAt > 5 * 60 * 1000) {
@@ -210,7 +218,13 @@ exports.handler = async () => {
     if (!state.enabled && state.phase === 0) return { statusCode: 200, body: 'OK' };
   }
 
-  // Load user-defined strategy settings, fall back to defaults if not set
+  // Early exit if arbitrage is idle — SOE collection above already ran
+  if (!state.enabled && state.phase === 0) {
+    return { statusCode: 200, body: 'OK' };
+  }
+
+  if (!tokenData) return { statusCode: 200, body: 'No token stored' };
+
   const rawSettings = await store.get('arb_settings');
   const s = rawSettings ? { ...DEFAULT_SETTINGS, ...JSON.parse(rawSettings) } : DEFAULT_SETTINGS;
   const { chargeTargetPct, startHour, startMinute, endHour, endMinute } = s;
@@ -218,6 +232,8 @@ exports.handler = async () => {
   const { access, apiBase, energySiteId: siteId } = tokenData;
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/London' }));
   const h = now.getHours(), m = now.getMinutes();
+  // Use the pre-fetched battery % (avoids a duplicate live_status call during active phases)
+  const pct = currentPct >= 0 ? currentPct : 0;
 
   try {
     // Phase 0 — wait for configured start time
@@ -231,8 +247,6 @@ exports.handler = async () => {
 
     // Phase 1 — charge to target %; log progress every 10 minutes
     else if (state.phase === 1) {
-      const live = await teslaGet(access, apiBase, `/api/1/energy_sites/${siteId}/live_status`);
-      const pct = Math.round(live.response?.percentage_charged || 0);
       if (m % 10 === 0) log(state, 'Phase 1 charging — battery at ' + pct + '%');
       if (pct >= chargeTargetPct) {
         log(state, 'Phase 1 complete — battery reached ' + pct + '%');
@@ -255,11 +269,8 @@ exports.handler = async () => {
       }
     }
 
-    // Phase 2 — export until empty; log progress every 10 minutes
+    // Phase 2 — export until empty; update rate average every tick
     else if (state.phase === 2) {
-      const live = await teslaGet(access, apiBase, `/api/1/energy_sites/${siteId}/live_status`);
-      const pct = Math.round(live.response?.percentage_charged || 0);
-      // Update running average rate on every tick to handle multiple 30-min Agile slots
       const tickRate = await getOctopusRate(store);
       if (tickRate > 0) {
         state.stats.rateSum = (state.stats.rateSum || 0) + tickRate;
@@ -293,8 +304,6 @@ exports.handler = async () => {
 
     // Phase 3 — recharge to 100%; log progress every 10 minutes
     else if (state.phase === 3) {
-      const live = await teslaGet(access, apiBase, `/api/1/energy_sites/${siteId}/live_status`);
-      const pct = Math.round(live.response?.percentage_charged || 0);
       if (m % 10 === 0) log(state, 'Phase 3 recharging — battery at ' + pct + '%');
       if (pct >= 98) {
         log(state, 'Phase 3 complete — battery at ' + pct + '%');
