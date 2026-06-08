@@ -228,10 +228,10 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 
       <div class="card">
         <div class="section-hd">
-          <span class="card-title" style="margin-bottom:0">Battery last 24h</span>
+          <span class="card-title" style="margin-bottom:0">Today vs. 5-day average</span>
           <span id="soe-chart-status" style="font-size:11px;color:#8e8e93"></span>
         </div>
-        <div class="chart-wrap" style="height:140px;margin-top:4px">
+        <div class="chart-wrap" style="height:165px;margin-top:4px">
           <canvas id="soeChart" role="img" aria-label="Battery charge over last 24 hours"></canvas>
         </div>
       </div>
@@ -602,7 +602,7 @@ function switchTab(name) {
   if (name==='tariff') initTariffPage();
   if (name==='health') initHealthPage();
   if (name==='settings') populateSettings();
-  if (name==='home' && state.teslaToken && state.energySiteId) startAutoRefresh();
+  if (name==='home' && state.teslaToken && state.energySiteId) { startAutoRefresh(); fetchServerSoeHistory(); }
   if (name==='arb') { renderArbUI(); startServerPoll(); }
 }
 function showSettings() { switchTab('settings'); }
@@ -1692,8 +1692,8 @@ async function init() {
     }
   }
 
-  // Start background auto-refresh every 30 seconds
-  if (state.teslaToken && state.energySiteId) startAutoRefresh();
+  // Start background auto-refresh every 30 seconds and sync SOE history from server
+  if (state.teslaToken && state.energySiteId) { startAutoRefresh(); fetchServerSoeHistory(); }
 
   // Restore arbitrage if it was enabled
   if (state.arbEnabled && state.arbPhase === 0) scheduleArbitrage();
@@ -1737,39 +1737,90 @@ let soeChart = null;
 function storeSoeReading(pct) {
   const readings = JSON.parse(localStorage.getItem('soe_history') || '[]');
   readings.push({ t: Date.now(), pct });
-  const cutoff = Date.now() - 25 * 3600 * 1000;
+  const cutoff = Date.now() - 6 * 24 * 3600 * 1000;
   localStorage.setItem('soe_history', JSON.stringify(readings.filter(r => r.t > cutoff)));
+}
+
+async function fetchServerSoeHistory() {
+  try {
+    const resp = await fetch('/.netlify/functions/arb-api?type=soe_history');
+    const data = await resp.json();
+    if (!data.soeHistory || !data.soeHistory.length) return;
+    // Merge: server is authoritative for historical data; keep any local readings newer than the server's latest
+    const serverLatest = Math.max(...data.soeHistory.map(r => r.t));
+    const localOnly = JSON.parse(localStorage.getItem('soe_history') || '[]').filter(r => r.t > serverLatest);
+    localStorage.setItem('soe_history', JSON.stringify([...data.soeHistory, ...localOnly]));
+    renderSoeChart();
+  } catch(e) {}
 }
 
 function renderSoeChart() {
   const ctx = document.getElementById('soeChart');
   if (!ctx) return;
+
   const readings = JSON.parse(localStorage.getItem('soe_history') || '[]');
-  const now = Date.now();
-  const buckets = [], labels = [];
-  for (let i = 47; i >= 0; i--) {
-    const end = now - i * 30 * 60 * 1000;
-    const start = end - 30 * 60 * 1000;
-    const inBucket = readings.filter(r => r.t >= start && r.t < end);
-    buckets.push(inBucket.length ? inBucket.reduce((s, r) => s + r.pct, 0) / inBucket.length : null);
-    const d = new Date(end);
-    const prevD = new Date(now - (i + 1) * 30 * 60 * 1000);
-    labels.push(i === 47 || d.getHours() !== prevD.getHours() ? String(d.getHours()).padStart(2,'0')+':00' : '');
-  }
-  const filledBuckets = buckets.filter(b => b !== null).length;
-  const hasData = filledBuckets > 0;
-  const hoursLeft = Math.ceil((48 - filledBuckets) / 2);
-  document.getElementById('soe-chart-status').textContent = hasData
-    ? (filledBuckets < 6 ? 'Building history…' : '')
-    : 'No history yet — refreshing every 30s';
+  const now = new Date();
+  const todayMidnight = new Date(now); todayMidnight.setHours(0,0,0,0);
+  const fiveDaysAgo = new Date(todayMidnight.getTime() - 5 * 24 * 3600 * 1000);
+
+  const historical = readings.filter(r => r.t >= fiveDaysAgo.getTime() && r.t < todayMidnight.getTime());
+  const todayData  = readings.filter(r => r.t >= todayMidnight.getTime());
+
+  // 15-minute buckets (96 per day)
+  const avgBuckets   = Array.from({length: 96}, () => []);
+  const todayBuckets = Array.from({length: 96}, () => []);
+  const slot = r => { const d = new Date(r.t); return Math.floor((d.getHours() * 60 + d.getMinutes()) / 15); };
+  historical.forEach(r => avgBuckets[slot(r)].push(r.pct));
+  todayData.forEach(r  => todayBuckets[slot(r)].push(r.pct));
+  const avg  = b => b.length ? parseFloat((b.reduce((s,v)=>s+v,0)/b.length).toFixed(1)) : null;
+  const avgLine   = avgBuckets.map(avg);
+  const todayLine = todayBuckets.map(avg);
+
+  const daysWithData = new Set(historical.map(r => new Date(r.t).toDateString())).size;
+  document.getElementById('soe-chart-status').textContent = daysWithData >= 5
+    ? '5-day average'
+    : daysWithData > 0 ? daysWithData + '-day average (building…)' : 'Collecting history — average builds over 5 days';
+
+  const currentSlot = Math.floor((now.getHours() * 60 + now.getMinutes()) / 15);
+  const labels = Array.from({length: 96}, (_, i) => (i * 15) % 60 === 0 ? String(Math.floor(i/4)).padStart(2,'0')+':00' : '');
+
   if (soeChart) soeChart.destroy();
   soeChart = new Chart(ctx.getContext('2d'), {
     type: 'line',
-    data: { labels, datasets: [{ data: buckets, borderColor: '#007aff', backgroundColor: 'rgba(0,122,255,0.08)', tension: 0.3, fill: true, pointRadius: 0, borderWidth: 2, spanGaps: true }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: {
-      x: { ticks: { font: { size: 9 }, color: '#8e8e93', maxRotation: 90, minRotation: 90, autoSkip: false }, grid: { display: false }, border: { display: false } },
-      y: { min: 0, max: 100, ticks: { font: { size: 10 }, color: '#8e8e93', callback: v => v+'%' }, grid: { color: '#f2f2f7' }, border: { display: false } }
-    }}
+    data: {
+      labels,
+      datasets: [
+        { label: '5-day avg', data: avgLine, borderColor: '#c7c7cc', backgroundColor: 'transparent',
+          tension: 0.4, fill: false, pointRadius: 0, borderWidth: 1.5, borderDash: [4,3], spanGaps: true },
+        { label: 'Today', data: todayLine, borderColor: '#007aff', backgroundColor: 'rgba(0,122,255,0.08)',
+          tension: 0.4, fill: true, pointRadius: 0, borderWidth: 2, spanGaps: true }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true, position: 'top', labels: { font: { size: 10 }, boxWidth: 20, color: '#3c3c43', usePointStyle: true } },
+        tooltip: { callbacks: {
+          title: items => { const i = items[0].dataIndex, m = i*15; return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0'); },
+          label: item => ' '+item.dataset.label+': '+(item.parsed.y != null ? item.parsed.y.toFixed(0)+'%' : 'No data')
+        }}
+      },
+      scales: {
+        x: { ticks: { font: { size: 9 }, color: '#8e8e93', maxRotation: 0, autoSkip: false }, grid: { display: false }, border: { display: false } },
+        y: { min: 0, max: 100, ticks: { font: { size: 10 }, color: '#8e8e93', callback: v => v+'%' }, grid: { color: '#f2f2f7' }, border: { display: false } }
+      }
+    },
+    plugins: [{
+      id: 'nowLine',
+      afterDraw(chart) {
+        const { ctx: c, chartArea: { top, bottom }, scales: { x } } = chart;
+        const xPos = x.getPixelForValue(currentSlot);
+        c.save();
+        c.beginPath(); c.moveTo(xPos, top); c.lineTo(xPos, bottom);
+        c.strokeStyle = 'rgba(255,59,48,0.5)'; c.lineWidth = 1.5;
+        c.setLineDash([3,3]); c.stroke(); c.restore();
+      }
+    }]
   });
 }
 
