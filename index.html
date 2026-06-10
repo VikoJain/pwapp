@@ -110,6 +110,18 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 .btn-secondary:hover{background:#fff2f2}
 .refresh-btn{background:none;border:none;cursor:pointer;color:#007aff;font-size:13px;font-weight:500;padding:2px 0;display:flex;align-items:center;gap:4px}
 .refresh-btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+/* Export sliders */
+.export-slider{width:100%;-webkit-appearance:none;appearance:none;height:5px;border-radius:3px;outline:none;margin:10px 0 4px;cursor:pointer;background:#e5e5ea}
+.export-slider:disabled{opacity:.4;cursor:not-allowed}
+.export-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:28px;height:28px;border-radius:50%;background:#007aff;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+.export-slider::-moz-range-thumb{width:28px;height:28px;border-radius:50%;background:#007aff;cursor:pointer;border:none;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+.slider-val{font-size:30px;font-weight:700;text-align:center;color:#1d1d1f;line-height:1;margin-bottom:2px}
+.slider-range-labels{display:flex;justify-content:space-between;font-size:11px;color:#8e8e93;margin-bottom:12px}
+.slider-btn-row{display:flex;gap:8px}
+.slider-btn-row .go-btn{flex:1;padding:12px}
+.slider-stop-btn{padding:12px 16px;border-radius:11px;background:#fff;color:#ff3b30;font-size:14px;font-weight:600;cursor:pointer;border:1.5px solid #ff3b30;white-space:nowrap;transition:background .15s}
+.slider-stop-btn:hover{background:#fff2f2}
+.slider-stop-btn:disabled{opacity:.4;cursor:not-allowed}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid #c7c7cc;border-top-color:#007aff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:5px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#1d1d1f;color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:500;z-index:100;opacity:0;transition:opacity .3s;pointer-events:none;max-width:320px;text-align:center}
@@ -261,24 +273,28 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 
       <div class="card">
         <div class="card-title">Timed export</div>
-        <div class="btn-grid" style="grid-template-columns:1fr 1fr 1fr">
-          <button class="exp-btn" id="btn1" onclick="startTimedExport(1,this)">Export 1 min</button>
-          <button class="exp-btn" id="btn3" onclick="startTimedExport(3,this)">Export 3 min</button>
-          <button class="exp-btn" id="btn5" onclick="startTimedExport(5,this)">Export 5 min</button>
-          <button class="exp-btn" id="btn10" onclick="startTimedExport(10,this)">Export 10 min</button>
-          <button class="exp-btn" id="btn15" onclick="startTimedExport(15,this)">Export 15 min</button>
-          <button class="exp-btn danger" onclick="stopExport()">Stop export</button>
+        <div class="slider-val" id="timed-val">5 minutes</div>
+        <div style="font-size:12px;color:#8e8e93;text-align:center;margin-top:2px;margin-bottom:4px">minutes</div>
+        <input class="export-slider" type="range" id="timed-slider" min="1" max="30" step="1" value="5" oninput="onTimedSliderChange()" />
+        <div class="slider-range-labels"><span>1 min</span><span>30 min</span></div>
+        <div class="slider-btn-row">
+          <button class="go-btn" id="timed-go-btn" onclick="startTimedExportSlider()" style="flex:1;padding:12px">Export 5 min</button>
+          <button class="slider-stop-btn" id="timed-stop-btn" onclick="stopExport()">Stop</button>
         </div>
-        <div class="status-bar" id="timer-bar">No timed export active.</div>
+        <div class="status-bar" id="timer-bar" style="margin-top:10px">No timed export active.</div>
       </div>
 
       <div class="card">
         <div class="card-title">Export to target %</div>
-        <div class="input-row">
-          <input class="pct-inp" type="number" id="pct-target" min="0" max="95" placeholder="Target % e.g. 20" />
-          <button class="go-btn" id="pct-go-btn" onclick="startPctExport()">Export</button>
+        <div class="slider-val" id="pct-val">20%</div>
+        <div style="font-size:12px;color:#8e8e93;text-align:center;margin-top:2px;margin-bottom:4px">stop exporting at</div>
+        <input class="export-slider" type="range" id="pct-slider" min="0" max="100" step="1" value="20" oninput="onPctSliderChange()" />
+        <div class="slider-range-labels"><span>0%</span><span>100%</span></div>
+        <div class="slider-btn-row">
+          <button class="go-btn" id="pct-go-btn" onclick="startPctExport()" style="flex:1;padding:12px">Export to 20%</button>
+          <button class="slider-stop-btn" id="pct-stop-btn" onclick="stopExport()">Stop</button>
         </div>
-        <div class="status-bar" id="pct-bar">Enter a target battery % below current level.</div>
+        <div class="status-bar" id="pct-bar" style="margin-top:10px">Set the target % to stop exporting at.</div>
       </div>
 
       <div class="card">
@@ -1121,18 +1137,40 @@ async function setOperationMode(mode, reservePct) {
   }
 }
 
-async function startTimedExport(mins, btn) {
+function onTimedSliderChange() {
+  const val = parseInt(document.getElementById('timed-slider').value);
+  document.getElementById('timed-val').textContent = val;
+  document.getElementById('timed-go-btn').textContent = 'Export ' + val + ' min';
+  updateSliderTrack('timed-slider');
+}
+
+function onPctSliderChange() {
+  const val = parseInt(document.getElementById('pct-slider').value);
+  document.getElementById('pct-val').textContent = val + '%';
+  document.getElementById('pct-go-btn').textContent = 'Export to ' + val + '%';
+  updateSliderTrack('pct-slider');
+}
+
+function updateSliderTrack(id) {
+  const s = document.getElementById(id);
+  if (!s) return;
+  const pct = ((parseInt(s.value) - parseInt(s.min)) / (parseInt(s.max) - parseInt(s.min))) * 100;
+  s.style.background = `linear-gradient(to right, #007aff ${pct}%, #e5e5ea ${pct}%)`;
+}
+
+function startTimedExportSlider() {
+  const mins = parseInt(document.getElementById('timed-slider').value);
+  startTimedExport(mins);
+}
+
+async function startTimedExport(mins) {
   if (!state.teslaToken) { toast('Connect Tesla first.'); return; }
   disableExportBtns(true);
   try {
     await setExportMode(true);
     if (state.exportTimer) clearInterval(state.exportTimer);
-    if (state.activeExportBtn) state.activeExportBtn.classList.remove('active');
-    state.activeExportBtn = btn; btn.classList.add('active');
-    // Wall-clock end time — survives screen lock, tab backgrounding and page reload
     state.exportEndTime = Date.now() + mins * 60 * 1000;
     localStorage.setItem('export_end_time', state.exportEndTime);
-    // Save end time to server so arb-tick can stop the export if the app stays backgrounded
     fetch('/.netlify/functions/arb-api', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'save_timed_export', endTime: state.exportEndTime })
@@ -1142,8 +1180,8 @@ async function startTimedExport(mins, btn) {
       if (Date.now() >= state.exportEndTime) { await stopExport(); return; }
       updateTimerBar();
     }, 1000);
-    toast('Exporting for '+mins+' minutes');
-  } catch(e) { toast('Error: '+e.message); }
+    toast('Exporting for ' + mins + ' minutes');
+  } catch(e) { toast('Error: ' + e.message); }
   finally { disableExportBtns(false); }
 }
 
@@ -1161,10 +1199,8 @@ async function stopExport() {
     body: JSON.stringify({ action: 'clear_timed_export' })
   }).catch(() => {});
   document.getElementById('timer-bar').textContent = 'Export stopped.';
-  document.getElementById('pct-bar').textContent = 'Enter a target battery % below current level.';
-  document.getElementById('pct-go-btn').textContent = 'Export';
-  document.getElementById('pct-go-btn').disabled = false;
-  document.getElementById('pct-go-btn').onclick = startPctExport;
+  document.getElementById('pct-bar').textContent = 'Set the target % to stop exporting at.';
+  resetPctBtn();
   if (state.teslaToken) {
     try {
       await setExportMode(false);
@@ -1182,16 +1218,24 @@ function updateTimerBar() {
 }
 
 function disableExportBtns(disabled) {
-  ['btn1','btn3','btn5','btn10','btn15'].forEach(id => document.getElementById(id).disabled = disabled);
+  const ids = ['timed-slider','timed-go-btn'];
+  ids.forEach(id => { const el = document.getElementById(id); if (el) el.disabled = disabled; });
+}
+
+function resetPctBtn() {
+  const val = parseInt(document.getElementById('pct-slider')?.value || 20);
+  const btn = document.getElementById('pct-go-btn');
+  const slider = document.getElementById('pct-slider');
+  if (btn) { btn.textContent = 'Export to ' + val + '%'; btn.disabled = false; btn.onclick = startPctExport; }
+  if (slider) slider.disabled = false;
 }
 
 async function startPctExport() {
-  const val = parseInt(document.getElementById('pct-target').value);
-  if (isNaN(val)||val<0||val>95) { document.getElementById('pct-bar').textContent = 'Enter a valid target between 0 and 95%.'; return; }
+  const val = parseInt(document.getElementById('pct-slider').value);
   if (!state.teslaToken) { toast('Connect Tesla first.'); return; }
-  // Fetch a fresh reading so the starting % is accurate, not a stale/interpolated value
   const goBtn = document.getElementById('pct-go-btn');
-  goBtn.disabled = true;
+  const slider = document.getElementById('pct-slider');
+  goBtn.disabled = true; slider.disabled = true;
   document.getElementById('pct-bar').textContent = 'Checking current battery level…';
   let pctNow;
   try {
@@ -1201,20 +1245,20 @@ async function startPctExport() {
   } catch(e) {
     pctNow = parseInt(document.getElementById('bat-pct').textContent) || 100;
   }
-  goBtn.disabled = false;
-  if (val >= pctNow) { document.getElementById('pct-bar').textContent = 'Target must be below current level ('+pctNow+'%).'; return; }
+  if (val >= pctNow) {
+    document.getElementById('pct-bar').textContent = 'Target must be below current level (' + pctNow + '%).';
+    goBtn.disabled = false; slider.disabled = false; return;
+  }
   try {
     await setExportMode(true);
-    // Persist the target so a page reload can resume monitoring
     localStorage.setItem('pct_export_target', val);
-    document.getElementById('pct-bar').innerHTML = 'Exporting — will stop at <span class="hl">'+val+'%</span>. Battery at '+pctNow+'% now.';
-    goBtn.textContent = 'Stop';
-    goBtn.onclick = stopExport;
-    toast('Export to '+val+'% started');
+    document.getElementById('pct-bar').innerHTML = 'Exporting — will stop at <span class="hl">' + val + '%</span>. Battery at ' + pctNow + '% now.';
+    toast('Export to ' + val + '% started');
     monitorPctExport(val);
   } catch(e) {
-    document.getElementById('pct-bar').textContent = 'Error: '+e.message;
-    toast('Error: '+e.message);
+    document.getElementById('pct-bar').textContent = 'Error: ' + e.message;
+    toast('Error: ' + e.message);
+    goBtn.disabled = false; slider.disabled = false;
   }
 }
 
@@ -1238,9 +1282,7 @@ function monitorPctExport(target) {
         localStorage.removeItem('pct_export_target');
         await setExportMode(false);
         document.getElementById('pct-bar').innerHTML = 'Export complete — stopped at <span class="hl">'+pct+'%</span> (target: '+target+'%).';
-        document.getElementById('pct-go-btn').textContent = 'Export';
-        document.getElementById('pct-go-btn').disabled = false;
-        document.getElementById('pct-go-btn').onclick = startPctExport;
+        resetPctBtn();
         toast('Stopped at '+pct+'% — target was '+target+'%');
         setTimeout(refreshData, 2000);
       }
@@ -2238,6 +2280,8 @@ async function autoRefreshLive() {
 checkTermsAccepted();
 init();
 pollServerStatus();
+onTimedSliderChange();
+onPctSliderChange();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
