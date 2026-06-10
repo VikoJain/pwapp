@@ -256,6 +256,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         <div class="chart-wrap" style="height:165px;margin-top:4px">
           <canvas id="soeChart" role="img" aria-label="Battery charge over last 24 hours"></canvas>
         </div>
+        <div id="soe-comparison" style="margin-top:10px;font-size:13px;color:#3c3c43;min-height:18px;text-align:center"></div>
       </div>
 
       <div class="card">
@@ -1067,6 +1068,7 @@ function updateHomeUI(live) {
   lastPollTime = Date.now();
   storeSoeReading(pct);
   renderSoeChart();
+  updateSoeComparison();
   document.getElementById('bat-pct').textContent = pct+'%';
   document.getElementById('bat-sub').textContent = `~${kwh} kWh · ${battW<0?'charging':battW>0?'discharging':'idle'}`;
   const fill = document.getElementById('bat-fill');
@@ -2150,7 +2152,7 @@ function renderSoeChart() {
         }}
       },
       scales: {
-        x: { ticks: { font: { size: 9 }, color: '#8e8e93', maxRotation: 0, autoSkip: false }, grid: { display: false }, border: { display: false } },
+        x: { ticks: { font: { size: 9 }, color: '#8e8e93', maxRotation: 90, minRotation: 90, autoSkip: false }, grid: { display: false }, border: { display: false } },
         y: { min: 0, max: 100, ticks: { font: { size: 10 }, color: '#8e8e93', callback: v => v+'%' }, grid: { color: '#f2f2f7' }, border: { display: false } }
       }
     },
@@ -2166,6 +2168,33 @@ function renderSoeChart() {
       }
     }]
   });
+  updateSoeComparison();
+}
+
+function updateSoeComparison() {
+  const el = document.getElementById('soe-comparison');
+  if (!el || lastKnownPct === null) return;
+  const readings = JSON.parse(localStorage.getItem('soe_history') || '[]');
+  const now = new Date();
+  const todayMidnight = new Date(now); todayMidnight.setHours(0,0,0,0);
+  const fiveDaysAgo = new Date(todayMidnight.getTime() - 5 * 24 * 3600 * 1000);
+  const historical = readings.filter(r => r.t >= fiveDaysAgo.getTime() && r.t < todayMidnight.getTime());
+  const currentSlot = Math.floor((now.getHours() * 60 + now.getMinutes()) / 15);
+  const buckets = Array.from({length: 96}, () => []);
+  historical.forEach(r => { const d = new Date(r.t); buckets[Math.floor((d.getHours()*60+d.getMinutes())/15)].push(r.pct); });
+  const slotVals = buckets[currentSlot];
+  const current = Math.round(lastKnownPct);
+  if (!slotVals || !slotVals.length) {
+    el.innerHTML = '<span style="color:#8e8e93">Now <strong>' + current + '%</strong> — average builds over 5 days</span>';
+    return;
+  }
+  const avgPct = Math.round(slotVals.reduce((s,v)=>s+v,0) / slotVals.length);
+  const diff = current - avgPct;
+  const diffStr = Math.abs(diff) + '%';
+  const arrow = diff > 0 ? '↑' : diff < 0 ? '↓' : '→';
+  const colour = diff > 3 ? '#34c759' : diff < -3 ? '#ff9500' : '#8e8e93';
+  const label = diff > 3 ? ' above your norm' : diff < -3 ? ' below your norm' : ' on track';
+  el.innerHTML = 'Now <strong>' + current + '%</strong> · 5-day avg <strong>' + avgPct + '%</strong> · <span style="color:' + colour + ';font-weight:600">' + arrow + ' ' + diffStr + label + '</span>';
 }
 
 let interpolateTimer = null;
