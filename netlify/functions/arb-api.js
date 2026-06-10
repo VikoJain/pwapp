@@ -26,7 +26,8 @@ exports.handler = async (event) => {
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ soeHistory }) };
       }
       const arbSettings = JSON.parse(await store.get('arb_settings') || 'null');
-      return { statusCode: 200, headers: CORS, body: JSON.stringify({ ...state, arbSettings }) };
+      const holidaySettings = JSON.parse(await store.get('holiday_settings') || 'null');
+      return { statusCode: 200, headers: CORS, body: JSON.stringify({ ...state, arbSettings, holidaySettings }) };
     }
 
     if (event.httpMethod === 'POST') {
@@ -84,6 +85,32 @@ exports.handler = async (event) => {
         actionLog.unshift({ ts: Date.now(), time, msg: body.msg });
         if (actionLog.length > 100) actionLog.length = 100;
         await store.set('action_log', JSON.stringify(actionLog));
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
+
+      if (body.action === 'toggle_holiday') {
+        state.holidayEnabled = !!body.enabled;
+        if (body.enabled) {
+          // Fresh start — reset stats and consumption samples each time holiday mode is turned on
+          state.holidayStats = { kwh: 0, earned: 0, avgRate: 0, rateSum: 0, rateSamples: 0 };
+          state.holidayConsumptionSamples = [];
+          state.holidayNonExportStart = null;
+          state.holidayExportStart = null;
+          if (state.holidayExporting) state.holidayExporting = false;
+        } else {
+          // Turning off — stop any active export on next tick by clearing flag
+          state.holidayExporting = false;
+        }
+        await store.set('state', JSON.stringify(state));
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
+
+      if (body.action === 'save_holiday_settings') {
+        await store.set('holiday_settings', JSON.stringify({
+          minExportRate: parseInt(body.minExportRate) || 20,
+          stopHour: body.stopHour !== undefined ? parseInt(body.stopHour) : 23,
+          stopMinute: body.stopMinute !== undefined ? parseInt(body.stopMinute) : 0
+        }));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
 
