@@ -532,14 +532,11 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       <div class="card">
         <div class="card-title">Settings</div>
         <div class="settings-row">
-          <div><div class="settings-lbl">Min export rate</div><div class="settings-sub">Only export above this rate</div></div>
-          <div style="display:flex;align-items:center;gap:4px"><input class="settings-inp" type="number" id="hol-min-rate" min="5" max="100" value="20" style="width:70px" /><span style="font-size:13px;color:#8e8e93">p/kWh</span></div>
-        </div>
-        <div class="settings-row">
           <div><div class="settings-lbl">Stop exporting at</div><div class="settings-sub">Leaves time before overnight cycle</div></div>
           <input class="settings-inp" type="time" id="hol-stop-time" value="23:00" />
         </div>
-        <button class="btn-primary" style="margin-top:10px" onclick="saveHolidaySettings()">Save settings</button>
+        <div style="font-size:11px;color:#8e8e93;margin-top:6px;line-height:1.5">The app automatically picks the best third of today's remaining Agile slots to export — no rate threshold to set.</div>
+        <button class="btn-primary" style="margin-top:12px" onclick="saveHolidaySettings()">Save settings</button>
         <div id="hol-settings-result" style="font-size:12px;margin-top:8px;min-height:16px"></div>
       </div>
 
@@ -1644,7 +1641,6 @@ async function toggleHolidayMode() {
 }
 
 async function saveHolidaySettings() {
-  const minRate = parseInt(document.getElementById('hol-min-rate').value) || 20;
   const stopTime = document.getElementById('hol-stop-time').value;
   const [stopHour, stopMinute] = stopTime.split(':').map(Number);
   const btn = document.querySelector('[onclick="saveHolidaySettings()"]');
@@ -1653,7 +1649,7 @@ async function saveHolidaySettings() {
   try {
     await fetch('/.netlify/functions/arb-api', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save_holiday_settings', minExportRate: minRate, stopHour, stopMinute })
+      body: JSON.stringify({ action: 'save_holiday_settings', stopHour, stopMinute })
     });
     result.textContent = 'Settings saved.'; result.style.color = '#1a7f37';
     toast('Holiday settings saved');
@@ -1663,9 +1659,7 @@ async function saveHolidaySettings() {
 
 function populateHolidaySettings(s) {
   if (!s) return;
-  const rateEl = document.getElementById('hol-min-rate');
   const stopEl = document.getElementById('hol-stop-time');
-  if (rateEl) rateEl.value = s.minExportRate || 20;
   if (stopEl) stopEl.value = fmt2(s.stopHour !== undefined ? s.stopHour : 23) + ':' + fmt2(s.stopMinute !== undefined ? s.stopMinute : 0);
 }
 
@@ -1704,12 +1698,18 @@ function renderHolidayUI(data) {
     expEl.className = 'stat-val ' + (exporting ? 'green' : '');
   }
 
+  const threshold = data.holidayRateThreshold;
+  const totalSlots = data.holidayTotalSlots || 0;
   const barEl = document.getElementById('hol-status-bar');
   if (barEl) {
     if (!enabled) { barEl.textContent = 'Enable holiday mode to begin.'; }
-    else if (exporting) { barEl.textContent = 'Exporting at ' + (currentRate > 0 ? currentRate.toFixed(1) + 'p/kWh' : '—p') + ' · floor ' + (reserveFloor || '—') + '%'; }
-    else if (samples < 3) { barEl.textContent = 'Measuring standby consumption — hold on a few minutes…'; }
-    else { barEl.textContent = 'Waiting for rate above threshold or floor reached (' + (reserveFloor || '—') + '%)'; }
+    else if (exporting) { barEl.textContent = 'Exporting at ' + (currentRate > 0 ? currentRate.toFixed(1) + 'p' : '—p') + ' — top-third slot (threshold ' + (threshold > 0 ? threshold.toFixed(1) + 'p' : '—') + ')'; }
+    else if (samples < 3) { barEl.textContent = 'Measuring standby consumption — check back in a few minutes…'; }
+    else if (reserveFloor != null && data.holidayExporting === false && currentRate > 0 && threshold > 0) {
+      barEl.textContent = currentRate < threshold
+        ? 'Rate ' + currentRate.toFixed(1) + 'p — below top-third threshold (' + threshold.toFixed(1) + 'p of ' + totalSlots + ' remaining slots)'
+        : 'Reserve floor reached — holding ' + reserveFloor + '% for standby';
+    } else { barEl.textContent = 'Active — monitoring rates'; }
   }
 
   const kwhEl = document.getElementById('hol-kwh');
