@@ -18,6 +18,7 @@
   ul li{margin-bottom:6px}
   a{color:#007aff;text-decoration:none}
   .card{background:#fff;border-radius:16px;padding:20px;border:1px solid #e5e5ea;margin-bottom:32px}
+  .notice{background:#fff3e0;border:1px solid #ffe0b2;border-radius:12px;padding:14px 16px;margin-bottom:20px;font-size:14px;color:#e65100;line-height:1.5}
 </style>
 </head>
 <body>
@@ -29,44 +30,130 @@
   <h1>Terms of Service</h1>
   <div class="updated">Last updated: June 2026</div>
 
+  <div class="notice">
+    <strong>Important:</strong> Powerwall Manager controls physical battery hardware in your home. Please read these terms carefully before use. By using the app you confirm you have read, understood, and accepted all terms set out below.
+  </div>
+
   <div class="card">
 
     <h2>1. Acceptance</h2>
-    <p>By using Powerwall Manager you agree to these terms. If you do not agree, please do not use the app.</p>
+    <p>By accessing or using Powerwall Manager ("the app") you agree to be bound by these Terms of Service. If you do not agree, you must not use the app. These terms constitute a legally binding agreement between you and Vikram Jain / Big Fat Star ("we", "us", "our").</p>
+    <p>Your statutory rights under the Consumer Rights Act 2015 and other applicable UK legislation are not affected by these terms.</p>
 
-    <h2>2. What the app does</h2>
-    <p>Powerwall Manager connects to your Tesla Powerwall via the Tesla Fleet API and your Octopus Energy account via the Octopus Energy API. It provides battery monitoring, manual export controls, and an automated overnight arbitrage cycle that charges and discharges your Powerwall to take advantage of variable Agile Outgoing export tariff rates.</p>
-
-    <h2>3. Your responsibilities</h2>
+    <h2>2. Eligibility</h2>
+    <p>To use the app you must:</p>
     <ul>
-      <li>You are responsible for ensuring your Tesla and Octopus Energy accounts are in good standing</li>
-      <li>You are responsible for configuring the arbitrage schedule appropriately for your circumstances, including maintaining sufficient battery reserve for home use and any backup power requirements</li>
-      <li>You must not share your account access with others</li>
-      <li>You must be the authorised owner or operator of the Powerwall you connect to the app</li>
+      <li>Be aged 18 or over</li>
+      <li>Be based in the United Kingdom</li>
+      <li>Be the legal owner or duly authorised operator of the Tesla Powerwall you connect to the app</li>
+      <li>Hold a valid Octopus Energy Agile Outgoing export tariff</li>
+      <li>Have a valid grid connection agreement (G98 or G99) with your Distribution Network Operator permitting export to the grid</li>
+    </ul>
+    <p>If you are a tenant, you must obtain the written consent of the property owner before using the app to control any Powerwall installed at the property.</p>
+
+    <h2>3. What the app does</h2>
+    <p>Powerwall Manager is a software tool that connects to your Tesla Powerwall via the Tesla Fleet API and to your Octopus Energy account via the Octopus Energy API. It provides battery monitoring, manual export controls, automated overnight charge-and-export cycles, daytime holiday export mode, and Tesla vehicle charging coordination.</p>
+    <p>The app sends commands to your Powerwall to charge from the grid, discharge and export to the grid, adjust battery reserve levels, and modify Tesla vehicle charging settings. These are real commands that cause physical changes to the operation of your hardware.</p>
+
+    <h2>4. Independence from Tesla and Octopus Energy</h2>
+    <p>Powerwall Manager is an independent product. It is not affiliated with, endorsed by, approved by, or in any way associated with Tesla, Inc. or Octopus Energy Limited. All Tesla and Octopus trademarks, product names, and logos are the property of their respective owners and are referenced solely to describe compatibility.</p>
+
+    <h2>5. Your responsibilities</h2>
+    <p>You are solely responsible for:</p>
+    <ul>
+      <li>Configuring the app correctly for your specific tariff, including ensuring start and end times align with your cheap import rate window</li>
+      <li>Verifying that your grid connection agreement (G98/G99) permits export to the grid at the levels the app may generate</li>
+      <li>Ensuring your export metering meets the requirements of the Smart Export Guarantee and your energy supplier</li>
+      <li>Monitoring your energy bills regularly to verify the app is operating as expected and is producing a net financial benefit for you</li>
+      <li>Disabling the app promptly if you believe it is not operating correctly or is increasing your energy costs</li>
+      <li>Ensuring your Tesla and Octopus Energy accounts remain in good standing and that your API credentials are kept up to date</li>
+      <li>Not using the app if your Powerwall provides backup power for any critical or life-sustaining equipment</li>
+      <li>Checking Tesla's current warranty terms and satisfying yourself that your intended use of the app is consistent with those terms before using it</li>
+      <li>Monitoring your Tesla vehicle's charge state independently of the app, particularly if you rely on the vehicle being charged by a specific time</li>
+      <li>Being the authorised owner or operator of any Powerwall or Tesla vehicle connected to the app</li>
     </ul>
 
-    <h2>4. No guarantees on earnings</h2>
-    <p>Arbitrage earnings depend on live Octopus Agile export rates, your battery capacity, grid availability, and other factors outside our control. We make no guarantee of specific earnings, savings, or uninterrupted operation.</p>
+    <h2>6. Battery cycling, degradation, and hardware risks</h2>
+    <p>The overnight arbitrage and holiday export features are designed to perform repeated deep charge and discharge cycles on your Powerwall. You acknowledge and accept that:</p>
+    <ul>
+      <li>Repeated deep cycling will increase the total cycle count of your battery and may accelerate capacity degradation over time</li>
+      <li>This usage pattern may affect your Powerwall's manufacturer warranty — you are responsible for reviewing Tesla's current warranty terms and satisfying yourself that your use is consistent with them</li>
+      <li>We make no warranty that the app's operation is compatible with any particular version of Tesla Powerwall hardware or firmware</li>
+      <li>We are not liable for any reduction in battery capacity, battery health, or battery lifespan arising from use of the app</li>
+      <li>We are not liable for any physical damage to your Powerwall, inverter, home electrical installation, or any other property arising from the app's operation, including any damage occurring as a result of a Tesla firmware issue, a grid fault, or any other factor outside our direct control</li>
+    </ul>
 
-    <h2>5. Limitation of liability</h2>
-    <p>Powerwall Manager is provided as-is. To the maximum extent permitted by law, we are not liable for any loss, damage, or unexpected battery behaviour arising from use of the app, including but not limited to unexpected battery discharge, missed export windows, or downtime of the Tesla or Octopus Energy APIs.</p>
+    <h2>7. Critical and medical loads</h2>
+    <p>You must not use the app if your Powerwall provides, or may be called upon to provide, backup power to any critical load, including but not limited to medical devices, life-support equipment, home oxygen concentrators, dialysis machines, or any other equipment upon which a person's health or safety depends. The app may discharge the battery to near 0% as part of its normal operation. We expressly exclude all liability for any harm, injury, or loss arising in connection with critical or medical loads.</p>
 
-    <h2>6. Third-party services</h2>
-    <p>This app relies on the Tesla Fleet API and Octopus Energy API. We are not responsible for service interruptions, changes in pricing, or policy changes made by Tesla or Octopus Energy that affect the app's functionality.</p>
+    <h2>8. Energy bill and financial risks</h2>
+    <p>You acknowledge and accept that:</p>
+    <ul>
+      <li>Use of the app involves purchasing electricity from the grid (during charging phases) and selling electricity to the grid (during export phases). The net financial outcome depends on the rates at which you buy and sell, which vary and are outside our control</li>
+      <li>The app does not guarantee a net financial saving or profit. There may be periods, days, or circumstances in which use of the app results in a higher energy bill than you would otherwise have incurred</li>
+      <li>Any increase in your electricity costs or energy bill resulting from use of the app, including from incorrect configuration, tariff changes, API failures, or any other cause, is your responsibility</li>
+      <li>Earnings and savings figures shown in the app are estimates based on battery capacity and Agile tariff data. Actual billing is determined by your energy supplier based on meter readings and your tariff terms, and may differ from in-app estimates</li>
+      <li>Export income may be taxable. You are responsible for understanding and complying with your obligations to HM Revenue and Customs. The app does not constitute tax advice</li>
+    </ul>
 
-    <h2>7. Subscriptions and billing</h2>
-    <p>Where a paid subscription is offered, billing is handled by Stripe. Subscriptions renew automatically unless cancelled. You may cancel at any time from your account settings. Refunds are considered on a case-by-case basis — contact us at <a href="mailto:thebigfatstar@gmail.com">thebigfatstar@gmail.com</a>.</p>
+    <h2>9. No professional advice</h2>
+    <p>Powerwall Manager is a software automation tool only. Nothing in the app or in any communications from us constitutes financial advice, energy advice, electrical engineering advice, tax advice, or legal advice. You should take independent professional advice if you are uncertain about any aspect of your energy setup, grid connection, tariff compliance, or tax position before using the app.</p>
 
-    <h2>8. Termination</h2>
-    <p>We reserve the right to suspend or terminate access to the app at any time for any reason. You may stop using the app and request deletion of your data at any time by contacting <a href="mailto:thebigfatstar@gmail.com">thebigfatstar@gmail.com</a>.</p>
+    <h2>10. Grid connection and regulatory compliance</h2>
+    <p>You are solely responsible for ensuring that your use of the app complies with all applicable laws, regulations, and codes of practice, including but not limited to the requirements of your Distribution Network Operator, the Smart Export Guarantee scheme rules, and any conditions attached to your energy supply and export agreements. We are not liable for any fines, penalties, or costs arising from your failure to comply with these requirements.</p>
 
-    <h2>9. Changes to these terms</h2>
-    <p>We may update these terms from time to time. The date at the top of this page will reflect the most recent revision. Continued use of the app after changes are posted constitutes your acceptance of the updated terms.</p>
+    <h2>11. Service availability and mid-cycle failure</h2>
+    <p>The app's automated functions depend on third-party infrastructure including Netlify, the Tesla Fleet API, and the Octopus Energy API. We do not guarantee uninterrupted operation. In the event of a service outage or failure mid-cycle, your Powerwall may be left in an intermediate state — for example with the battery reserve set to 0%, export mode active, or with charging paused. You are responsible for monitoring your system and taking manual corrective action if the app fails to operate as expected. We are not liable for any costs, losses, or inconvenience arising from service interruptions.</p>
 
-    <h2>10. Governing law</h2>
-    <p>These terms are governed by the laws of England and Wales. Any disputes shall be subject to the exclusive jurisdiction of the courts of England and Wales.</p>
+    <h2>12. Tesla vehicle charging</h2>
+    <p>The car charging coordination feature may pause, resume, or modify the charge limit of your Tesla vehicle as part of the overnight cycle. You acknowledge that monitoring your vehicle's charge state and ensuring it is adequately charged for your needs remains your responsibility at all times. We are not liable for any loss, inconvenience, or cost arising from the vehicle not being charged to the level you require, including if you are unable to use the vehicle as a result.</p>
 
-    <h2>11. Contact</h2>
+    <h2>13. Data security</h2>
+    <p>Your Tesla authentication tokens and Octopus Energy credentials are stored on Netlify's server infrastructure. We take reasonable steps to secure this data. However, we cannot guarantee absolute security. In the event of a data breach affecting third-party infrastructure (including Netlify), we are not liable for any loss or damage arising from unauthorised access to your credentials or unauthorised commands sent to your hardware, provided we have taken reasonable security precautions. Please refer to our <a href="/privacy">Privacy Policy</a> for full details of how your data is handled.</p>
+
+    <h2>14. Limitation of liability</h2>
+    <p>To the maximum extent permitted by applicable law:</p>
+    <ul>
+      <li>The app is provided on an "as is" and "as available" basis without warranty of any kind, express or implied</li>
+      <li>We do not warrant that the app will be error-free, uninterrupted, or fit for any particular purpose</li>
+      <li>Our total aggregate liability to you for any claim arising out of or in connection with your use of the app shall not exceed the total subscription fees paid by you in the three months immediately preceding the event giving rise to the claim</li>
+      <li>Nothing in these terms excludes or limits our liability for death or personal injury caused by our negligence, or for fraudulent misrepresentation, or for any other liability that cannot be excluded or limited under applicable law</li>
+    </ul>
+
+    <h2>15. Exclusion of consequential loss</h2>
+    <p>To the maximum extent permitted by law, we shall not be liable for any indirect, incidental, special, consequential, or punitive loss or damage, including but not limited to: loss of profits, loss of revenue, loss of savings, loss of data, loss of goodwill, increased energy costs, damage to hardware or property, or any loss arising from your inability to use your vehicle or your Powerwall backup power, whether or not we have been advised of the possibility of such loss.</p>
+
+    <h2>16. Indemnification</h2>
+    <p>You agree to indemnify, defend, and hold harmless Vikram Jain / Big Fat Star from and against any claims, liabilities, damages, losses, costs, and expenses (including reasonable legal fees) arising out of or in connection with: your use or misuse of the app; your breach of these terms; your failure to comply with applicable laws or regulations; or any claim by a third party relating to your use of the app.</p>
+
+    <h2>17. Third-party services</h2>
+    <p>The app relies on the Tesla Fleet API and Octopus Energy API. We are not responsible for any service interruptions, changes in API functionality, changes in pricing models, policy changes, or termination of access by Tesla or Octopus Energy. Changes to these third-party services may affect or prevent the app from functioning, and we are not liable for any resulting loss.</p>
+
+    <h2>18. Force majeure</h2>
+    <p>We shall not be liable for any failure or delay in performing our obligations under these terms where such failure or delay results from any cause beyond our reasonable control, including but not limited to: acts of God, power outages, internet or telecommunications failures, Netlify infrastructure failures, Tesla API or Octopus Energy API outages, government action, or changes in law or regulation.</p>
+
+    <h2>19. Subscriptions and billing</h2>
+    <p>Where a paid subscription is offered, billing is handled by Stripe. Subscriptions renew automatically unless cancelled before the renewal date. You may cancel at any time. Refunds are considered on a case-by-case basis — contact us at <a href="mailto:thebigfatstar@gmail.com">thebigfatstar@gmail.com</a>.</p>
+
+    <h2>20. Intellectual property</h2>
+    <p>All intellectual property rights in the app, including its code, design, and content, are owned by Vikram Jain / Big Fat Star. You may not copy, reproduce, reverse engineer, or distribute any part of the app without our prior written consent.</p>
+
+    <h2>21. Termination</h2>
+    <p>We reserve the right to suspend or terminate access to the app at any time, including if you breach these terms. Upon termination you should disconnect your Tesla and Octopus accounts and verify your Powerwall has returned to normal autonomous operation. You may stop using the app and request deletion of your data at any time by contacting <a href="mailto:thebigfatstar@gmail.com">thebigfatstar@gmail.com</a>.</p>
+
+    <h2>22. Changes to these terms</h2>
+    <p>We may update these terms from time to time. The date at the top of this page reflects the most recent revision. We will notify users of material changes where reasonably practicable. Continued use of the app after updated terms are posted constitutes your acceptance of those terms.</p>
+
+    <h2>23. Severability</h2>
+    <p>If any provision of these terms is found to be unlawful, void, or unenforceable, that provision shall be deemed severable and shall not affect the validity and enforceability of the remaining provisions.</p>
+
+    <h2>24. Governing law</h2>
+    <p>These terms are governed by the laws of England and Wales. Any disputes arising out of or in connection with these terms shall be subject to the exclusive jurisdiction of the courts of England and Wales.</p>
+
+    <h2>25. Statutory rights</h2>
+    <p>Nothing in these terms affects your statutory rights as a consumer under the Consumer Rights Act 2015 or any other applicable UK consumer protection legislation. If you are a consumer, you have rights in relation to digital content that is not of satisfactory quality, fit for purpose, or as described.</p>
+
+    <h2>26. Contact</h2>
     <p>Vikram Jain / Big Fat Star<br><a href="mailto:thebigfatstar@gmail.com">thebigfatstar@gmail.com</a></p>
 
   </div>
