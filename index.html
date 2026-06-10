@@ -269,6 +269,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <canvas id="soeChart" role="img" aria-label="Battery charge over last 24 hours"></canvas>
         </div>
         <div id="soe-comparison" style="margin-top:10px;font-size:13px;color:#3c3c43;min-height:18px;text-align:center"></div>
+        <div id="soe-projection" style="margin-top:5px;font-size:13px;color:#3c3c43;min-height:18px;text-align:center"></div>
       </div>
 
       <div class="card">
@@ -1085,6 +1086,7 @@ function updateHomeUI(live) {
   storeSoeReading(pct);
   renderSoeChart();
   updateSoeComparison();
+  updateSoeProjection();
   document.getElementById('bat-pct').textContent = pct+'%';
   document.getElementById('bat-sub').textContent = `~${kwh} kWh · ${battW<0?'charging':battW>0?'discharging':'idle'}`;
   const fill = document.getElementById('bat-fill');
@@ -2117,6 +2119,27 @@ async function init() {
       }
     }
   }
+}
+
+function updateSoeProjection() {
+  const el = document.getElementById('soe-projection');
+  if (!el || lastKnownPct === null) { if (el) el.textContent = ''; return; }
+
+  const now = new Date();
+  const target = new Date(now); target.setHours(23, 30, 0, 0);
+  if (now >= target) target.setDate(target.getDate() + 1);
+  const hoursTo = (target - now) / 3600000;
+
+  if (lastKnownBattW === 0) {
+    el.innerHTML = 'Est. at 23:30: <strong>' + Math.round(lastKnownPct) + '%</strong> <span style="color:#8e8e93">(battery idle)</span>';
+    return;
+  }
+
+  const pctPerHr = (lastKnownBattW / 13500) * 100;
+  const estimated = Math.min(100, Math.max(0, Math.round(lastKnownPct - (pctPerHr * hoursTo))));
+  const colour = estimated >= 30 ? '#34c759' : estimated >= 15 ? '#ff9500' : '#ff3b30';
+  const label = lastKnownBattW > 0 ? 'at current discharge rate' : 'at current charge rate';
+  el.innerHTML = 'Est. at 23:30: <strong style="color:' + colour + '">' + estimated + '%</strong> <span style="color:#8e8e93">(' + label + ')</span>';
 }
 
 // ── 24h SOE chart ─────────────────────────────────────────
