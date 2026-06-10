@@ -517,6 +517,53 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       </div>
     </div>
 
+    <!-- HOLIDAY PAGE -->
+    <div class="page" id="page-holiday">
+      <div class="card">
+        <div class="arb-toggle-row">
+          <div>
+            <div class="arb-toggle-lbl">Holiday mode</div>
+            <div class="arb-toggle-sub" id="hol-toggle-sub">Sell at peak rates while you're away</div>
+          </div>
+          <button class="big-toggle" id="hol-main-toggle" onclick="toggleHolidayMode()"></button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Settings</div>
+        <div class="settings-row">
+          <div><div class="settings-lbl">Min export rate</div><div class="settings-sub">Only export above this rate</div></div>
+          <div style="display:flex;align-items:center;gap:4px"><input class="settings-inp" type="number" id="hol-min-rate" min="5" max="100" value="20" style="width:70px" /><span style="font-size:13px;color:#8e8e93">p/kWh</span></div>
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-lbl">Stop exporting at</div><div class="settings-sub">Leaves time before overnight cycle</div></div>
+          <input class="settings-inp" type="time" id="hol-stop-time" value="23:00" />
+        </div>
+        <button class="btn-primary" style="margin-top:10px" onclick="saveHolidaySettings()">Save settings</button>
+        <div id="hol-settings-result" style="font-size:12px;margin-top:8px;min-height:16px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Live status</div>
+        <div class="stat-grid">
+          <div class="stat"><div class="stat-val" id="hol-consumption">—</div><div class="stat-lbl">Consumption rate</div></div>
+          <div class="stat"><div class="stat-val" id="hol-reserve-floor">—%</div><div class="stat-lbl">Reserve floor</div></div>
+          <div class="stat"><div class="stat-val" id="hol-current-rate">—p</div><div class="stat-lbl">Current rate</div></div>
+          <div class="stat"><div class="stat-val" id="hol-export-status">—</div><div class="stat-lbl">Export</div></div>
+        </div>
+        <div class="status-bar" id="hol-status-bar" style="margin-top:10px">Enable holiday mode to begin.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Holiday earnings</div>
+        <div class="arb-earnings">
+          <div class="arb-earn-card"><div class="arb-earn-val" id="hol-kwh">—</div><div class="arb-earn-lbl">kWh exported</div></div>
+          <div class="arb-earn-card"><div class="arb-earn-val" id="hol-avg-rate">—p</div><div class="arb-earn-lbl">Avg rate</div></div>
+          <div class="arb-earn-card"><div class="arb-earn-val" id="hol-earned">£—</div><div class="arb-earn-lbl">Est. earned</div></div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <nav class="nav">
@@ -534,7 +581,11 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
     </button>
     <button class="nav-item" id="tab-arb" onclick="switchTab('arb')">
       <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-      Arbitrage
+      Night
+    </button>
+    <button class="nav-item" id="tab-holiday" onclick="switchTab('holiday')">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      Holiday
     </button>
     <button class="nav-item" id="tab-health" onclick="switchTab('health')">
       <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
@@ -589,13 +640,11 @@ let state = {
 
 // ── UI helpers ────────────────────────────────────────────
 function switchTab(name) {
-  // Pages that exist
-  ['setup','home','tariff','arb','health','settings'].forEach(t => {
+  ['setup','home','tariff','arb','holiday','health','settings'].forEach(t => {
     const page = document.getElementById('page-'+t);
     if (page) page.classList.toggle('active', t===name);
   });
-  // Nav tabs (health has no nav tab)
-  ['setup','home','tariff','arb','settings'].forEach(t => {
+  ['setup','home','tariff','arb','holiday','health','settings'].forEach(t => {
     const tab = document.getElementById('tab-'+t);
     if (tab) tab.classList.toggle('active', t===name);
   });
@@ -604,6 +653,7 @@ function switchTab(name) {
   if (name==='settings') populateSettings();
   if (name==='home' && state.teslaToken && state.energySiteId) { startAutoRefresh(); fetchServerSoeHistory(); }
   if (name==='arb') { renderArbUI(); startServerPoll(); }
+  if (name==='holiday') { renderHolidayUI(); startServerPoll(); }
 }
 function showSettings() { switchTab('settings'); }
 function toast(msg, dur=2800) {
@@ -1205,7 +1255,9 @@ async function pollServerStatus() {
     if (data.stats) state.arbStats = data.stats;
     // Sync strategy settings to the UI
     if (data.arbSettings) populateArbSettings(data.arbSettings);
+    if (data.holidaySettings) populateHolidaySettings(data.holidaySettings);
     renderArbUI();
+    renderHolidayUI(data);
   } catch(e) {}
 }
 
@@ -1574,6 +1626,98 @@ async function startArbPhase5() {
     scheduleArbitrage();
     renderArbUI();
   } catch(e) { arbLog('Phase 5 error: '+e.message); }
+}
+
+// ── Holiday mode ──────────────────────────────────────────
+async function toggleHolidayMode() {
+  const btn = document.getElementById('hol-main-toggle');
+  const nowOn = !btn.classList.contains('on');
+  btn.classList.toggle('on', nowOn);
+  try {
+    await fetch('/.netlify/functions/arb-api', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'toggle_holiday', enabled: nowOn })
+    });
+    toast(nowOn ? 'Holiday mode enabled' : 'Holiday mode disabled');
+    await pollServerStatus();
+  } catch(e) { toast('Error: ' + e.message); }
+}
+
+async function saveHolidaySettings() {
+  const minRate = parseInt(document.getElementById('hol-min-rate').value) || 20;
+  const stopTime = document.getElementById('hol-stop-time').value;
+  const [stopHour, stopMinute] = stopTime.split(':').map(Number);
+  const btn = document.querySelector('[onclick="saveHolidaySettings()"]');
+  const result = document.getElementById('hol-settings-result');
+  btn.disabled = true; result.textContent = 'Saving…'; result.style.color = '#8e8e93';
+  try {
+    await fetch('/.netlify/functions/arb-api', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save_holiday_settings', minExportRate: minRate, stopHour, stopMinute })
+    });
+    result.textContent = 'Settings saved.'; result.style.color = '#1a7f37';
+    toast('Holiday settings saved');
+  } catch(e) { result.textContent = 'Error: ' + e.message; result.style.color = '#ff3b30'; }
+  btn.disabled = false;
+}
+
+function populateHolidaySettings(s) {
+  if (!s) return;
+  const rateEl = document.getElementById('hol-min-rate');
+  const stopEl = document.getElementById('hol-stop-time');
+  if (rateEl) rateEl.value = s.minExportRate || 20;
+  if (stopEl) stopEl.value = fmt2(s.stopHour !== undefined ? s.stopHour : 23) + ':' + fmt2(s.stopMinute !== undefined ? s.stopMinute : 0);
+}
+
+function renderHolidayUI(data) {
+  data = data || {};
+  const enabled = !!data.holidayEnabled;
+  const exporting = !!data.holidayExporting;
+  const consumption = data.holidayConsumptionKwhPerHr;
+  const reserveFloor = data.holidayReserveFloorPct;
+  const currentRate = data.holidayCurrentRate;
+  const samples = (data.holidayConsumptionSamples || []).length;
+  const stats = data.holidayStats || {};
+
+  const toggle = document.getElementById('hol-main-toggle');
+  if (toggle) toggle.classList.toggle('on', enabled);
+
+  const sub = document.getElementById('hol-toggle-sub');
+  if (sub) sub.textContent = enabled
+    ? (exporting ? 'Exporting to grid now' : 'Active — monitoring rates')
+    : 'Sell at peak rates while you\'re away';
+
+  const consEl = document.getElementById('hol-consumption');
+  if (consEl) consEl.textContent = consumption > 0
+    ? consumption.toFixed(2) + ' kW' + (samples < 3 ? '*' : '')
+    : '—';
+
+  const floorEl = document.getElementById('hol-reserve-floor');
+  if (floorEl) floorEl.textContent = reserveFloor != null ? reserveFloor + '%' : '—%';
+
+  const rateEl = document.getElementById('hol-current-rate');
+  if (rateEl) rateEl.textContent = currentRate > 0 ? currentRate.toFixed(1) + 'p' : '—p';
+
+  const expEl = document.getElementById('hol-export-status');
+  if (expEl) {
+    expEl.textContent = enabled ? (exporting ? 'On' : 'Off') : '—';
+    expEl.className = 'stat-val ' + (exporting ? 'green' : '');
+  }
+
+  const barEl = document.getElementById('hol-status-bar');
+  if (barEl) {
+    if (!enabled) { barEl.textContent = 'Enable holiday mode to begin.'; }
+    else if (exporting) { barEl.textContent = 'Exporting at ' + (currentRate > 0 ? currentRate.toFixed(1) + 'p/kWh' : '—p') + ' · floor ' + (reserveFloor || '—') + '%'; }
+    else if (samples < 3) { barEl.textContent = 'Measuring standby consumption — hold on a few minutes…'; }
+    else { barEl.textContent = 'Waiting for rate above threshold or floor reached (' + (reserveFloor || '—') + '%)'; }
+  }
+
+  const kwhEl = document.getElementById('hol-kwh');
+  const avgRateEl = document.getElementById('hol-avg-rate');
+  const earnedEl = document.getElementById('hol-earned');
+  if (kwhEl) kwhEl.textContent = stats.kwh > 0 ? stats.kwh.toFixed(1) : '—';
+  if (avgRateEl) avgRateEl.textContent = stats.avgRate > 0 ? stats.avgRate.toFixed(1) + 'p' : '—p';
+  if (earnedEl) earnedEl.textContent = stats.earned > 0 ? '£' + stats.earned.toFixed(2) : '£—';
 }
 
 // ── Health ────────────────────────────────────────────────
