@@ -123,6 +123,20 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 .mode-export{background:#fff3e0;color:#e65100}
 .mode-auto{background:#f3e5f5;color:#6a1b9a}
 
+/* Guide styles */
+.guide-step{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #f2f2f7}
+.guide-step:last-child{border:none}
+.step-num{width:26px;height:26px;border-radius:50%;background:#007aff;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
+.step-body{flex:1}
+.step-title{font-size:14px;font-weight:600;margin-bottom:4px;color:#1d1d1f}
+.step-desc{font-size:13px;color:#3c3c43;line-height:1.55}
+.step-desc code,.guide-code{font-family:monospace;background:#f2f2f7;padding:1px 5px;border-radius:4px;font-size:12px}
+.guide-tip{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid #f2f2f7;font-size:13px;color:#3c3c43;line-height:1.5}
+.guide-tip:last-child{border:none}
+.guide-tip-dot{width:6px;height:6px;border-radius:50%;background:#007aff;flex-shrink:0;margin-top:6px}
+.guide-section-lbl{font-size:11px;font-weight:600;color:#8e8e93;text-transform:uppercase;letter-spacing:.06em;margin:14px 0 6px}
+.guide-intro{font-size:13px;color:#3c3c43;line-height:1.6;margin-bottom:10px}
+
 /* Arbitrage styles */
 .arb-hero{text-align:center;padding:8px 0 16px}
 .arb-status-circle{width:100px;height:100px;border-radius:50%;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:32px;border:3px solid #e5e5ea;background:#f9f9f9;transition:all .4s}
@@ -561,6 +575,151 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       </div>
     </div>
 
+    <!-- GUIDE PAGE -->
+    <div class="page" id="page-guide">
+
+      <div class="card">
+        <div class="card-title">Quick start</div>
+        <div class="guide-step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Connect your Tesla account</div>
+            <div class="step-desc">Go to the <strong>Setup tab</strong> and tap <strong>Connect with Tesla</strong>. You'll be taken to Tesla's own login page — sign in and grant permissions. You'll be returned to the app automatically.</div>
+          </div>
+        </div>
+        <div class="guide-step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Connect Octopus Energy</div>
+            <div class="step-desc">On the same Setup tab, enter your Octopus API key and account number. The app detects your Agile Outgoing tariff automatically. See the <em>Connecting your accounts</em> card below for exactly where to find these.</div>
+          </div>
+        </div>
+        <div class="guide-step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">You're ready</div>
+            <div class="step-desc">Tap <strong>Home</strong> to see your live battery. Tap <strong>Tariff</strong> for today's export rates. Head to <strong>Night</strong> when you're ready to set up automated overnight arbitrage.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Connecting your accounts</div>
+        <div class="guide-section-lbl">Tesla</div>
+        <div class="guide-intro">Your Tesla login is handled entirely by Tesla's own page — the app never sees your password. Once connected, your authorisation token is stored securely on the server so the app can run overnight even when your phone is off.</div>
+        <div class="guide-intro" style="margin-bottom:0">If you need to reconnect, go to <strong>Settings → Reconnect Tesla</strong>. You may also need to reconnect if Tesla revokes access after an account security change.</div>
+        <div class="guide-section-lbl">Octopus Energy</div>
+        <div class="guide-intro">You need two things from your Octopus account:</div>
+        <div class="guide-step">
+          <div class="step-num" style="background:#34c759">1</div>
+          <div class="step-body">
+            <div class="step-title">API key</div>
+            <div class="step-desc">Log in at <strong>octopus.energy</strong> → click your name top right → <strong>Account</strong> → scroll to <strong>API access</strong>. Your key starts with <span class="guide-code">sk_live_</span></div>
+          </div>
+        </div>
+        <div class="guide-step">
+          <div class="step-num" style="background:#34c759">2</div>
+          <div class="step-body">
+            <div class="step-title">Account number</div>
+            <div class="step-desc">On the same page, your account number is in the format <span class="guide-code">A-12345678</span>. It appears near the top of the API access section.</div>
+          </div>
+        </div>
+        <div style="font-size:12px;color:#8e8e93;margin-top:8px;line-height:1.5">The app requires an active <strong>Agile Outgoing</strong> export tariff. If none is detected, contact Octopus Energy to add one to your account.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Home tab</div>
+        <div class="guide-intro">Shows your Powerwall's live status, refreshing every 30 seconds.</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Battery %</strong> — current charge level. The display interpolates between API updates so the number stays live.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Grid / Home / Export stats</strong> — live power flows in kW. A negative grid value means you are exporting to the grid.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Today vs 5-day average chart</strong> — the blue line is today's battery level, the grey dashed line is your average across the same time of day over the past 5 days. Use this to judge whether you have more or less charge than usual before deciding to export manually.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Timed export</strong> — manually export for a fixed number of minutes. Useful when you spot a high rate on the Tariff tab. The server stops it automatically even if your phone locks.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Export to target %</strong> — discharges to a specific battery percentage then stops automatically. Good for precise manual control.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Battery reserve</strong> — sets Tesla's minimum backup level. At 0% the full battery is available for export. The overnight cycle manages this automatically — only adjust manually if needed.</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Tariff tab</div>
+        <div class="guide-intro">Shows your live Octopus Agile Outgoing export rates for today, and tomorrow's rates from around 4pm.</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Rate chart</strong> — each bar is a 30-minute slot. <span class="green" style="font-weight:600">Green</span> = best (&gt;25p), <span class="blue" style="font-weight:600">blue</span> = good (18–25p), <span class="amber" style="font-weight:600">amber</span> = fair (&lt;18p).</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Best export windows</strong> — the top 5 slots ranked by rate. Use this to plan manual exports or to sense-check whether the overnight cycle is running at the right time.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Earnings estimator</strong> — enter a kWh figure to see what it would earn at the current rate. Useful for a quick calculation before a manual export.</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Night tab — overnight arbitrage</div>
+        <div class="guide-intro">Automates the full overnight charge-and-export cycle. It runs entirely on the server, so it works while your phone is off or away from home.</div>
+        <div class="guide-section-lbl">How the cycle works</div>
+        <div class="phase-timeline">
+          <div class="phase-row">
+            <div class="phase-dot blue"></div>
+            <div class="phase-info">
+              <div class="phase-name">Phase 1 — Charge</div>
+              <div class="phase-desc">At your start time the Powerwall charges from the grid to your target %. This uses cheap overnight electricity.</div>
+            </div>
+          </div>
+          <div class="phase-row">
+            <div class="phase-dot green"></div>
+            <div class="phase-info">
+              <div class="phase-name">Phase 2 — Export</div>
+              <div class="phase-desc">Once charged, the battery discharges and exports to the grid at your Agile export rate. The app tracks the average rate across all slots.</div>
+            </div>
+          </div>
+          <div class="phase-row">
+            <div class="phase-dot amber"></div>
+            <div class="phase-info">
+              <div class="phase-name">Phase 3 — Recharge</div>
+              <div class="phase-desc">When the battery reaches around 0%, it recharges to 100% from the grid, ready for the day ahead.</div>
+            </div>
+          </div>
+          <div class="phase-row">
+            <div class="phase-dot grey"></div>
+            <div class="phase-info">
+              <div class="phase-name">Phase 4 — Standby then Normal</div>
+              <div class="phase-desc">Once fully charged the battery waits until your end time, then returns to normal autonomous operation.</div>
+            </div>
+          </div>
+        </div>
+        <div class="guide-section-lbl">Key settings</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Charge to %</strong> — how full to charge before exporting. <strong>80–90% is recommended.</strong> Higher means more energy to sell but a longer charge time.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Start time</strong> — set this to when your cheap overnight import rate begins. Common choices: 23:30 (Agile), 00:30 (Octopus Go), 02:00 (Cosy). Check your import tariff.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>End time</strong> — when the cycle finishes and normal operation resumes. 05:30 works for most tariffs. Set it before your cheap rate window ends.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Car charging control</strong> — if your Tesla car charges overnight, enable this. Phase 2 pauses car charging so it doesn't reduce your export, then resumes it in Phase 3.</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Holiday tab</div>
+        <div class="guide-intro">Exports during the day while you're away. It runs from 05:30 until your chosen stop time, operating alongside the overnight cycle.</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>No rate threshold to set</strong> — the app automatically identifies the best third of today's remaining Agile slots and only exports during those.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Reserve floor</strong> — the app measures your actual standby consumption (fridge, router, etc.) and calculates the minimum battery % needed to power the house until the overnight cycle begins at 23:30. It will never export below this floor.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Enable when you leave, disable when you return.</strong> When you are home your consumption is much higher — the app will take a few hours to recalibrate.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div>Holiday mode and overnight arbitrage work together automatically. Holiday mode handles the day, overnight arbitrage handles the night.</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Good practice</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Check after your first overnight run.</strong> Open the Night tab in the morning — confirm all phases completed and earnings are showing. The phase timeline shows where the cycle got to.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Align your start time with your import tariff.</strong> Phase 1 charges from the grid — make sure this happens during your cheapest rate window, not outside it.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Earnings shown are estimates.</strong> The app calculates revenue based on battery capacity and Agile rates. Your actual Octopus credit may differ slightly due to meter timing and standing charges.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Don't run manual exports during an overnight cycle.</strong> The automated cycle manages export mode itself — using the manual controls on the Home tab at the same time will interfere.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>The 5-day chart builds over time.</strong> It takes 5 days to become fully representative. During that period it shows however many days of history have been collected.</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Troubleshooting</div>
+        <div class="guide-tip"><div class="guide-tip-dot" style="background:#34c759"></div><div><strong>Green dot</strong> — connected and reading live data normally.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot" style="background:#ff9500"></div><div><strong>Amber dot</strong> — connecting. If it stays amber, tap Refresh on the Home tab.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot" style="background:#c7c7cc"></div><div><strong>Grey dot</strong> — not connected. Go to Settings and tap Reconnect Tesla.</div></div>
+        <div class="guide-section-lbl">Common issues</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Overnight cycle didn't start</strong> — check the toggle on the Night tab is on and that the start time has passed. The server runs once per minute so there can be up to a 1-minute delay.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Car control not working</strong> — tap Find car in Night settings. If still not found, go to <strong>accounts.tesla.com → Connected apps → Powerwall Manager</strong> and tick vehicle permissions, then reconnect Tesla.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Octopus rates not loading</strong> — check your API key and account number in Settings → Octopus Energy. The key should start with <span class="guide-code">sk_live_</span></div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Cycle appears stuck in a phase</strong> — check the battery % on the Home tab. Phase 2 ends when the battery reaches around 0%; Phase 3 ends when it reaches around 98%.</div></div>
+        <div style="margin-top:12px;font-size:13px;color:#8e8e93">For anything else, contact <a href="mailto:thebigfatstar@gmail.com" style="color:#007aff">thebigfatstar@gmail.com</a></div>
+      </div>
+
+    </div>
+
   </div>
 
   <nav class="nav">
@@ -591,6 +750,10 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
     <button class="nav-item active" id="tab-settings" onclick="switchTab('settings')">
       <svg viewBox="0 0 24 24"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       Settings
+    </button>
+    <button class="nav-item" id="tab-guide" onclick="switchTab('guide')">
+      <svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+      Guide
     </button>
   </nav>
 </div>
@@ -637,11 +800,11 @@ let state = {
 
 // ── UI helpers ────────────────────────────────────────────
 function switchTab(name) {
-  ['setup','home','tariff','arb','holiday','health','settings'].forEach(t => {
+  ['setup','home','tariff','arb','holiday','health','settings','guide'].forEach(t => {
     const page = document.getElementById('page-'+t);
     if (page) page.classList.toggle('active', t===name);
   });
-  ['setup','home','tariff','arb','holiday','health','settings'].forEach(t => {
+  ['setup','home','tariff','arb','holiday','health','settings','guide'].forEach(t => {
     const tab = document.getElementById('tab-'+t);
     if (tab) tab.classList.toggle('active', t===name);
   });
