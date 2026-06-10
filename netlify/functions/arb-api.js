@@ -107,7 +107,6 @@ exports.handler = async (event) => {
 
       if (body.action === 'save_holiday_settings') {
         await store.set('holiday_settings', JSON.stringify({
-          minExportRate: parseInt(body.minExportRate) || 20,
           stopHour: body.stopHour !== undefined ? parseInt(body.stopHour) : 23,
           stopMinute: body.stopMinute !== undefined ? parseInt(body.stopMinute) : 0
         }));
