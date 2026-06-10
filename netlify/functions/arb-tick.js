@@ -140,6 +140,109 @@ async function vehicleChargeStart(token, apiBase, vehicleId) {
 
 function fmt2(n) { return String(n).padStart(2, '0'); }
 
+async function runHolidayMode(state, store, tokenData, currentPctRaw, h, m) {
+  const hs = JSON.parse(await store.get('holiday_settings') || 'null') || {};
+  const minExportRate = hs.minExportRate || 20;
+  const stopHour = hs.stopHour !== undefined ? hs.stopHour : 23;
+  const stopMinute = hs.stopMinute !== undefined ? hs.stopMinute : 0;
+  const { access, apiBase, energySiteId: siteId } = tokenData;
+  const minuteOfDay = h * 60 + m;
+  const stopMinuteOfDay = stopHour * 60 + stopMinute;
+  const inWindow = minuteOfDay >= (5 * 60 + 30) && minuteOfDay < stopMinuteOfDay;
+
+  if (!inWindow) {
+    if (state.holidayExporting) {
+      try { await setExport(access, apiBase, siteId, false); await setMode(access, apiBase, siteId, 'autonomous', 0); } catch(e) {}
+      state.holidayExporting = false;
+      log(state, 'Holiday: window ended at ' + fmt2(h) + ':' + fmt2(m) + ' — export off, ready for overnight cycle');
+    }
+    return;
+  }
+
+  const pct = currentPctRaw >= 0 ? currentPctRaw : 0;
+  const pctInt = Math.round(pct);
+  const now = Date.now();
+
+  // ── Consumption measurement (samples taken from non-export periods ≥15 min) ──
+  state.holidayConsumptionSamples = state.holidayConsumptionSamples || [];
+  if (!state.holidayExporting) {
+    if (state.holidayNonExportStart) {
+      const elapsed = (now - state.holidayNonExportStart.time) / 3600000;
+      if (elapsed >= 0.25) {
+        const dropPct = state.holidayNonExportStart.pct - pct;
+        if (dropPct > 0 && dropPct < 30) {
+          const rate = Math.max(0.02, Math.min(2.0, (dropPct / 100 * 13.5) / elapsed));
+          state.holidayConsumptionSamples.push(parseFloat(rate.toFixed(3)));
+          if (state.holidayConsumptionSamples.length > 20) state.holidayConsumptionSamples.shift();
+        }
+        state.holidayNonExportStart = { pct, time: now };
+      }
+    } else {
+      state.holidayNonExportStart = { pct, time: now };
+    }
+  } else {
+    state.holidayNonExportStart = null;
+  }
+
+  const samples = state.holidayConsumptionSamples;
+  const measuredRate = samples.length >= 3
+    ? samples.reduce((s, v) => s + v, 0) / samples.length
+    : 0.3;
+  state.holidayConsumptionKwhPerHr = parseFloat(measuredRate.toFixed(3));
+
+  // ── Reserve floor — how much battery to keep for house until stop time ──
+  const hoursToStop = Math.max(0, (stopMinuteOfDay - minuteOfDay) / 60);
+  const requiredKwh = hoursToStop * measuredRate;
+  const reserveFloorPct = Math.min(95, Math.ceil((requiredKwh / 13.5) * 100));
+  state.holidayReserveFloorPct = reserveFloorPct;
+
+  // ── Current rate ──
+  const rate = await getOctopusRate(store);
+  state.holidayCurrentRate = rate;
+
+  // ── Export decision ──
+  const shouldExport = pctInt > reserveFloorPct && rate >= minExportRate;
+
+  if (shouldExport && !state.holidayExporting) {
+    try {
+      await setMode(access, apiBase, siteId, 'autonomous', 0);
+      await setExport(access, apiBase, siteId, true);
+      state.holidayExporting = true;
+      state.holidayExportStart = { pct, time: now, rate };
+      log(state, 'Holiday: export on — ' + rate.toFixed(1) + 'p/kWh, battery ' + pctInt + '%, floor ' + reserveFloorPct + '%');
+    } catch(e) { log(state, 'Holiday: export start error: ' + e.message); }
+
+  } else if (!shouldExport && state.holidayExporting) {
+    try {
+      await setExport(access, apiBase, siteId, false);
+      await setMode(access, apiBase, siteId, 'autonomous', 0);
+      state.holidayExporting = false;
+
+      // Earnings for this export window
+      if (state.holidayExportStart) {
+        const durationHrs = (now - state.holidayExportStart.time) / 3600000;
+        const totalDropPct = state.holidayExportStart.pct - pct;
+        const houseUsedPct = durationHrs * measuredRate / 13.5 * 100;
+        const netExportedPct = Math.max(0, totalDropPct - houseUsedPct);
+        const netExportedKwh = parseFloat((netExportedPct / 100 * 13.5).toFixed(2));
+        const avgPeriodRate = (state.holidayExportStart.rate + rate) / 2;
+        const periodEarned = parseFloat((netExportedKwh * avgPeriodRate / 100).toFixed(2));
+        state.holidayStats = state.holidayStats || { kwh: 0, earned: 0, avgRate: 0, rateSum: 0, rateSamples: 0 };
+        state.holidayStats.kwh = parseFloat((state.holidayStats.kwh + netExportedKwh).toFixed(2));
+        state.holidayStats.earned = parseFloat((state.holidayStats.earned + periodEarned).toFixed(2));
+        state.holidayStats.rateSum = (state.holidayStats.rateSum || 0) + avgPeriodRate;
+        state.holidayStats.rateSamples = (state.holidayStats.rateSamples || 0) + 1;
+        state.holidayStats.avgRate = parseFloat((state.holidayStats.rateSum / state.holidayStats.rateSamples).toFixed(1));
+        state.holidayExportStart = null;
+        const reason = pctInt <= reserveFloorPct
+          ? 'reserve floor reached (' + pctInt + '% ≤ ' + reserveFloorPct + '%)'
+          : 'rate ' + rate.toFixed(1) + 'p below threshold (' + minExportRate + 'p)';
+        log(state, 'Holiday: export off — ' + reason + ' · ~' + netExportedKwh + ' kWh · £' + periodEarned);
+      }
+    } catch(e) { log(state, 'Holiday: export stop error: ' + e.message); }
+  }
+}
+
 exports.handler = async () => {
   const { getStore } = require('@netlify/blobs');
   const store = getStore({ name: 'arb', siteID: process.env.SITE_ID, token: process.env.NETLIFY_API_TOKEN });
@@ -218,8 +321,8 @@ exports.handler = async () => {
     if (!state.enabled && state.phase === 0) return { statusCode: 200, body: 'OK' };
   }
 
-  // Early exit if arbitrage is idle — SOE collection above already ran
-  if (!state.enabled && state.phase === 0) {
+  // Early exit if nothing to do — SOE collection above already ran
+  if (!state.enabled && state.phase === 0 && !state.holidayEnabled) {
     return { statusCode: 200, body: 'OK' };
   }
 
@@ -330,6 +433,13 @@ exports.handler = async () => {
 
   } catch (e) {
     log(state, 'Error in phase ' + state.phase + ': ' + e.message);
+  }
+
+  // Holiday mode — runs independently during daytime when overnight arbitrage is idle
+  if (state.holidayEnabled && state.phase === 0 && tokenData) {
+    try {
+      await runHolidayMode(state, store, tokenData, currentPct, h, m);
+    } catch(e) { log(state, 'Holiday error: ' + e.message); }
   }
 
   await store.set('state', JSON.stringify(state));
