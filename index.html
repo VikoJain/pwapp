@@ -123,6 +123,14 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 .mode-export{background:#fff3e0;color:#e65100}
 .mode-auto{background:#f3e5f5;color:#6a1b9a}
 
+/* Terms acceptance overlay */
+.terms-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:500;display:flex;align-items:flex-end;justify-content:center}
+.terms-overlay.hidden{display:none}
+.terms-sheet{background:#fff;border-radius:20px 20px 0 0;width:100%;max-width:430px;padding:20px 20px calc(24px + env(safe-area-inset-bottom,0px));max-height:88vh;overflow-y:auto}
+.terms-point{display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-bottom:1px solid #f2f2f7;font-size:13px;color:#3c3c43;line-height:1.5}
+.terms-point:last-of-type{border:none}
+.terms-point-icon{font-size:17px;flex-shrink:0;margin-top:0px}
+
 /* Guide styles */
 .guide-step{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid #f2f2f7}
 .guide-step:last-child{border:none}
@@ -760,6 +768,24 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 
 <div class="toast" id="toast"></div>
 
+<div class="terms-overlay hidden" id="terms-overlay">
+  <div class="terms-sheet">
+    <div style="width:36px;height:4px;background:#e5e5ea;border-radius:2px;margin:0 auto 18px"></div>
+    <div style="font-size:20px;font-weight:700;margin-bottom:6px">Before you begin</div>
+    <div style="font-size:13px;color:#8e8e93;margin-bottom:16px;line-height:1.5">Powerwall Manager controls physical battery hardware in your home. Please read and acknowledge the following key points.</div>
+
+    <div class="terms-point"><div class="terms-point-icon">⚡</div><div><strong>Physical hardware control.</strong> The app sends real commands to your Powerwall — charging, discharging, and modifying settings. You are responsible for monitoring that it is operating correctly.</div></div>
+    <div class="terms-point"><div class="terms-point-icon">🔋</div><div><strong>Battery wear and warranty.</strong> Repeated deep cycling may accelerate battery degradation and could affect your Tesla warranty. You accept responsibility for checking Tesla's warranty terms before use.</div></div>
+    <div class="terms-point"><div class="terms-point-icon">💷</div><div><strong>No guarantee of savings.</strong> The app may result in higher energy costs if misconfigured or if tariff conditions change. You are responsible for monitoring your energy bills and disabling the app if it is not working as expected.</div></div>
+    <div class="terms-point"><div class="terms-point-icon">🚫</div><div><strong>Not for critical loads.</strong> Do not use this app if your Powerwall provides backup power for medical devices or any life-critical equipment. The app may discharge the battery to near 0%.</div></div>
+    <div class="terms-point"><div class="terms-point-icon">🔌</div><div><strong>Grid export compliance.</strong> You confirm you hold a valid G98/G99 connection agreement permitting export to the grid and that your metering meets Smart Export Guarantee requirements.</div></div>
+    <div class="terms-point"><div class="terms-point-icon">⚠️</div><div><strong>No professional advice.</strong> The app is a software tool only and does not constitute financial, energy, electrical, or tax advice. Take independent professional advice if you are unsure about any aspect of your setup.</div></div>
+
+    <div style="font-size:12px;color:#8e8e93;margin:16px 0 14px;line-height:1.6;text-align:center">By tapping I Agree you confirm you have read and accepted the full <a href="/terms" target="_blank" style="color:#007aff">Terms of Service</a> and <a href="/privacy" target="_blank" style="color:#007aff">Privacy Policy</a>.</div>
+    <button class="btn-primary" onclick="acceptTerms()">I Agree — Continue to App</button>
+  </div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
 const TESLA_AUTH_URL = 'https://fleet-auth.prd.vn.cloud.tesla.com/oauth2/v3';
@@ -797,6 +823,17 @@ let state = {
   normalTariff: JSON.parse(localStorage.getItem('arb_normal_tariff') || 'null'),
   arbSettings: null,
 };
+
+// ── Terms acceptance ──────────────────────────────────────
+function checkTermsAccepted() {
+  if (!localStorage.getItem('terms_v1')) {
+    document.getElementById('terms-overlay').classList.remove('hidden');
+  }
+}
+function acceptTerms() {
+  localStorage.setItem('terms_v1', new Date().toISOString());
+  document.getElementById('terms-overlay').classList.add('hidden');
+}
 
 // ── UI helpers ────────────────────────────────────────────
 function switchTab(name) {
@@ -2169,6 +2206,7 @@ async function autoRefreshLive() {
   } catch(e) {}
 }
 
+checkTermsAccepted();
 init();
 pollServerStatus();
 
