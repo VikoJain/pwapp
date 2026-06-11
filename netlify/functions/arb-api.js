@@ -5,42 +5,46 @@ const CORS = {
   'Content-Type': 'application/json'
 };
 
+const DEFAULT_STATE = '{"phase":0,"enabled":false,"log":[],"stats":{"kwh":0,"rate":0,"earned":0}}';
+
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers: CORS, body: '' };
   try {
     const { getStore } = require('@netlify/blobs');
     const store = getStore({ name: 'arb', siteID: process.env.SITE_ID, token: process.env.NETLIFY_API_TOKEN });
-    const state = JSON.parse(await store.get('state') || '{"phase":0,"enabled":false,"log":[],"stats":{"kwh":0,"rate":0,"earned":0,"importCost":0,"netProfit":0}}');
+
+    // Extract device_id from query string (GET) or body (POST)
+    const qp = event.queryStringParameters || {};
+    const body = event.httpMethod === 'POST' ? JSON.parse(event.body || '{}') : {};
+    const device_id = qp.device_id || body.device_id;
+
+    if (!device_id) {
+      return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Missing device_id' }) };
+    }
+
+    const k = s => s + '_' + device_id; // key scoper helper
 
     if (event.httpMethod === 'GET') {
-      if (event.queryStringParameters && event.queryStringParameters.type === 'actions') {
-        const actionLog = JSON.parse(await store.get('action_log') || '[]');
+      if (qp.type === 'actions') {
+        const actionLog = JSON.parse(await store.get(k('action_log')) || '[]');
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ actionLog }) };
       }
-      if (event.queryStringParameters && event.queryStringParameters.type === 'settings') {
-        const settings = JSON.parse(await store.get('oct_settings') || 'null');
+      if (qp.type === 'settings') {
+        const settings = JSON.parse(await store.get(k('oct_settings')) || 'null');
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ settings }) };
       }
-      if (event.queryStringParameters && event.queryStringParameters.type === 'soe_history') {
-        const soeHistory = JSON.parse(await store.get('soe_history') || '[]');
+      if (qp.type === 'soe_history') {
+        const soeHistory = JSON.parse(await store.get(k('soe_history')) || '[]');
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ soeHistory }) };
       }
-      const arbSettings = JSON.parse(await store.get('arb_settings') || 'null');
-      const holidaySettings = JSON.parse(await store.get('holiday_settings') || 'null');
+      const state = JSON.parse(await store.get(k('state')) || DEFAULT_STATE);
+      const arbSettings = JSON.parse(await store.get(k('arb_settings')) || 'null');
+      const holidaySettings = JSON.parse(await store.get(k('holiday_settings')) || 'null');
       return { statusCode: 200, headers: CORS, body: JSON.stringify({ ...state, arbSettings, holidaySettings }) };
     }
 
     if (event.httpMethod === 'POST') {
-      const body = JSON.parse(event.body || '{}');
-
-      if (body.action === 'save_token') {
-        await store.set('token', JSON.stringify({
-          access: body.access, refresh: body.refresh, expiry: body.expiry,
-          clientId: body.clientId, clientSecret: body.clientSecret,
-          apiBase: body.apiBase, energySiteId: body.energySiteId
-        }));
-        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
-      }
+      const state = JSON.parse(await store.get(k('state')) || DEFAULT_STATE);
 
       if (body.action === 'toggle') {
         state.enabled = body.enabled;
@@ -48,25 +52,22 @@ exports.handler = async (event) => {
         const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
         state.log.unshift('[' + time + '] Arbitrage ' + (body.enabled ? 'enabled — server-side, starts at 23:30' : 'disabled by user'));
         if (!body.enabled) state.phase = 0;
-        await store.set('state', JSON.stringify(state));
+        await store.set(k('state'), JSON.stringify(state));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
 
       if (body.action === 'save_settings') {
-        await store.set('oct_settings', JSON.stringify({
+        await store.set(k('oct_settings'), JSON.stringify({
           octKey: body.octKey,
           octTariff: body.octTariff,
           octProduct: body.octProduct,
-          octAccount: body.octAccount,
-          importTariff: body.importTariff,
-          importProduct: body.importProduct,
-          cheapRate: body.cheapRate
+          octAccount: body.octAccount
         }));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
 
       if (body.action === 'save_arb_settings') {
-        await store.set('arb_settings', JSON.stringify({
+        await store.set(k('arb_settings'), JSON.stringify({
           chargeTargetPct: parseInt(body.chargeTargetPct) || 50,
           startHour: body.startHour !== undefined ? parseInt(body.startHour) : 23,
           startMinute: body.startMinute !== undefined ? parseInt(body.startMinute) : 30,
@@ -79,34 +80,23 @@ exports.handler = async (event) => {
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
 
-      if (body.action === 'log_action') {
-        const actionLog = JSON.parse(await store.get('action_log') || '[]');
-        const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-        actionLog.unshift({ ts: Date.now(), time, msg: body.msg });
-        if (actionLog.length > 100) actionLog.length = 100;
-        await store.set('action_log', JSON.stringify(actionLog));
-        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
-      }
-
       if (body.action === 'toggle_holiday') {
         state.holidayEnabled = !!body.enabled;
         if (body.enabled) {
-          // Fresh start — reset stats and consumption samples each time holiday mode is turned on
           state.holidayStats = { kwh: 0, earned: 0, avgRate: 0, rateSum: 0, rateSamples: 0 };
           state.holidayConsumptionSamples = [];
           state.holidayNonExportStart = null;
           state.holidayExportStart = null;
-          if (state.holidayExporting) state.holidayExporting = false;
+          state.holidayExporting = false;
         } else {
-          // Turning off — stop any active export on next tick by clearing flag
           state.holidayExporting = false;
         }
-        await store.set('state', JSON.stringify(state));
+        await store.set(k('state'), JSON.stringify(state));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
 
       if (body.action === 'save_holiday_settings') {
-        await store.set('holiday_settings', JSON.stringify({
+        await store.set(k('holiday_settings'), JSON.stringify({
           stopHour: body.stopHour !== undefined ? parseInt(body.stopHour) : 23,
           stopMinute: body.stopMinute !== undefined ? parseInt(body.stopMinute) : 0
         }));
@@ -114,22 +104,27 @@ exports.handler = async (event) => {
       }
 
       if (body.action === 'save_timed_export') {
-        await store.set('timed_export', JSON.stringify({ endTime: body.endTime }));
+        await store.set(k('timed_export'), JSON.stringify({ endTime: body.endTime }));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
 
       if (body.action === 'clear_timed_export') {
-        await store.delete('timed_export');
+        await store.delete(k('timed_export'));
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
+
+      if (body.action === 'log_action') {
+        const actionLog = JSON.parse(await store.get(k('action_log')) || '[]');
+        const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        actionLog.unshift({ ts: Date.now(), time, msg: body.msg });
+        if (actionLog.length > 100) actionLog.length = 100;
+        await store.set(k('action_log'), JSON.stringify(actionLog));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
     }
 
     return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Unknown request' }) };
   } catch (e) {
-    return {
-      statusCode: 200,
-      headers: CORS,
-      body: JSON.stringify({ error: e.message, type: e.constructor.name })
-    };
+    return { statusCode: 200, headers: CORS, body: JSON.stringify({ error: e.message, type: e.constructor.name }) };
   }
 };
