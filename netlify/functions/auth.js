@@ -101,7 +101,7 @@ exports.handler = async (event) => {
               tok.refresh = refreshed.refresh_token;
               tok.expiry = Date.now() + refreshed.expires_in * 1000;
               await store.set('device_' + p.device_id, JSON.stringify(tok));
-              await updateArbToken(store, tok);
+              await updateArbToken(store, tok, p.device_id);
             }
           } catch (e) {}
         }
@@ -153,7 +153,7 @@ exports.handler = async (event) => {
         tok.refresh = refreshed.refresh_token;
         tok.expiry = Date.now() + refreshed.expires_in * 1000;
         await store.set('device_' + device_id, JSON.stringify(tok));
-        await updateArbToken(store, tok);
+        await updateArbToken(store, tok, device_id);
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ access_token: tok.access, refresh_token: tok.refresh, expiry: tok.expiry }) };
       }
 
