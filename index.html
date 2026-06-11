@@ -1175,7 +1175,7 @@ async function startTimedExport(mins) {
     localStorage.setItem('export_end_time', state.exportEndTime);
     fetch('/.netlify/functions/arb-api', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save_timed_export', endTime: state.exportEndTime })
+      body: JSON.stringify({ action: 'save_timed_export', endTime: state.exportEndTime, device_id: getDeviceId() })
     }).catch(() => {});
     updateTimerBar();
     state.exportTimer = setInterval(async () => {
@@ -1198,7 +1198,7 @@ async function stopExport() {
   // Clear server-side timed export record
   fetch('/.netlify/functions/arb-api', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'clear_timed_export' })
+    body: JSON.stringify({ action: 'clear_timed_export', device_id: getDeviceId() })
   }).catch(() => {});
   document.getElementById('timer-bar').textContent = 'Export stopped.';
   document.getElementById('pct-bar').textContent = 'Set the target % to stop exporting at.';
@@ -1462,7 +1462,8 @@ async function syncOctopusToServer() {
         octKey: state.octKey,
         octTariff: state.octTariff,
         octProduct: state.octProduct,
-        octAccount: state.octAccount
+        octAccount: state.octAccount,
+        device_id: getDeviceId()
       })
     });
   } catch(e) { console.warn('Octopus sync failed:', e.message); }
@@ -1475,14 +1476,14 @@ async function toggleServerArbitrage(enabled) {
   }
   await fetch('/.netlify/functions/arb-api', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'toggle', enabled })
+    body: JSON.stringify({ action: 'toggle', enabled, device_id: getDeviceId() })
   });
 }
 
 let serverPollTimer = null;
 async function pollServerStatus() {
   try {
-    const resp = await fetch('/.netlify/functions/arb-api');
+    const resp = await fetch('/.netlify/functions/arb-api?device_id=' + encodeURIComponent(getDeviceId()));
     const data = await resp.json();
     if (data.error) return;
     // Sync enabled state from server — keeps all devices in sync
@@ -1724,7 +1725,7 @@ async function saveArbSettings() {
   try {
     await fetch('/.netlify/functions/arb-api', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save_arb_settings', chargeTargetPct: pct, startHour, startMinute, endHour, endMinute, carControlEnabled, carChargeLimit, carChargeLimitPhase2 })
+      body: JSON.stringify({ action: 'save_arb_settings', chargeTargetPct: pct, startHour, startMinute, endHour, endMinute, carControlEnabled, carChargeLimit, carChargeLimitPhase2, device_id: getDeviceId() })
     });
     populateArbSettings({ chargeTargetPct: pct, startHour, startMinute, endHour, endMinute, carControlEnabled, carChargeLimit, carChargeLimitPhase2 });
     result.textContent = 'Strategy saved — takes effect on next cycle.';
@@ -1879,7 +1880,7 @@ async function toggleHolidayMode() {
   try {
     await fetch('/.netlify/functions/arb-api', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'toggle_holiday', enabled: nowOn })
+      body: JSON.stringify({ action: 'toggle_holiday', enabled: nowOn, device_id: getDeviceId() })
     });
     toast(nowOn ? 'Holiday mode enabled' : 'Holiday mode disabled');
     await pollServerStatus();
@@ -1895,7 +1896,7 @@ async function saveHolidaySettings() {
   try {
     await fetch('/.netlify/functions/arb-api', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save_holiday_settings', stopHour, stopMinute })
+      body: JSON.stringify({ action: 'save_holiday_settings', stopHour, stopMinute, device_id: getDeviceId() })
     });
     result.textContent = 'Settings saved.'; result.style.color = '#1a7f37';
     toast('Holiday settings saved');
@@ -2154,7 +2155,7 @@ function storeSoeReading(pct) {
 
 async function fetchServerSoeHistory() {
   try {
-    const resp = await fetch('/.netlify/functions/arb-api?type=soe_history');
+    const resp = await fetch('/.netlify/functions/arb-api?type=soe_history&device_id=' + encodeURIComponent(getDeviceId()));
     const data = await resp.json();
     if (!data.soeHistory || !data.soeHistory.length) return;
     // Merge: server is authoritative for historical data; keep any local readings newer than the server's latest
