@@ -40,10 +40,10 @@ async function teslaTokenRequest(params) {
   return JSON.parse(res.body);
 }
 
-// Keep the shared arb 'token' blob in sync so arb-tick.js always has current credentials
-async function updateArbToken(store, tok) {
+// Keep the per-device arb token blob in sync so arb-tick.js always has current credentials
+async function updateArbToken(store, tok, deviceId) {
   try {
-    await store.set('token', JSON.stringify({
+    await store.set('token_' + deviceId, JSON.stringify({
       access: tok.access,
       refresh: tok.refresh,
       expiry: tok.expiry,
@@ -136,7 +136,7 @@ exports.handler = async (event) => {
         const expiry = Date.now() + tok.expires_in * 1000;
         const stored = { access: tok.access_token, refresh: tok.refresh_token, expiry, clientId: CLIENT_ID, apiBase: API_BASE };
         await store.set('device_' + device_id, JSON.stringify(stored));
-        await updateArbToken(store, stored);
+        await updateArbToken(store, stored, device_id);
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ access_token: tok.access_token, refresh_token: tok.refresh_token, expiry }) };
       }
 
@@ -168,7 +168,7 @@ exports.handler = async (event) => {
           if (api_base) tok.apiBase = api_base;
           if (vehicle_id) tok.vehicleId = vehicle_id;
           await store.set('device_' + device_id, JSON.stringify(tok));
-          await updateArbToken(store, tok);
+          await updateArbToken(store, tok, device_id);
         }
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
