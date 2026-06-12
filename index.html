@@ -1195,10 +1195,14 @@ async function stopExport() {
   state.exportEndTime = null;
   localStorage.removeItem('export_end_time');
   localStorage.removeItem('pct_export_target');
-  // Clear server-side timed export record
+  // Clear server-side timed and pct export records
   fetch('/.netlify/functions/arb-api', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'clear_timed_export', device_id: getDeviceId() })
+  }).catch(() => {});
+  fetch('/.netlify/functions/arb-api', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'clear_pct_export', device_id: getDeviceId() })
   }).catch(() => {});
   document.getElementById('timer-bar').textContent = 'Export stopped.';
   document.getElementById('pct-bar').textContent = 'Set the target % to stop exporting at.';
@@ -1254,6 +1258,10 @@ async function startPctExport() {
   try {
     await setExportMode(true);
     localStorage.setItem('pct_export_target', val);
+    fetch('/.netlify/functions/arb-api', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save_pct_export', targetPct: val, device_id: getDeviceId() })
+    }).catch(() => {});
     document.getElementById('pct-bar').innerHTML = 'Exporting — will stop at <span class="hl">' + val + '%</span>. Battery at ' + pctNow + '% now.';
     toast('Export to ' + val + '% started');
     monitorPctExport(val);
@@ -1282,6 +1290,10 @@ function monitorPctExport(target) {
         clearInterval(state.pctMonitorInterval);
         state.pctMonitorInterval = null;
         localStorage.removeItem('pct_export_target');
+        fetch('/.netlify/functions/arb-api', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'clear_pct_export', device_id: getDeviceId() })
+        }).catch(() => {});
         await setExportMode(false);
         document.getElementById('pct-bar').innerHTML = 'Export complete — stopped at <span class="hl">'+pct+'%</span> (target: '+target+'%).';
         resetPctBtn();
