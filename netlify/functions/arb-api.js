@@ -113,6 +113,16 @@ exports.handler = async (event) => {
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
 
+      if (body.action === 'save_pct_export') {
+        await store.set(k('pct_export'), JSON.stringify({ targetPct: parseInt(body.targetPct) }));
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
+
+      if (body.action === 'clear_pct_export') {
+        await store.delete(k('pct_export'));
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
+
       if (body.action === 'log_action') {
         const actionLog = JSON.parse(await store.get(k('action_log')) || '[]');
         const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
