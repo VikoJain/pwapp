@@ -260,8 +260,15 @@ async function processUser(store, deviceId) {
 
   const timedExport = JSON.parse(await store.get('timed_export_' + deviceId) || 'null');
   if (timedExport && timedExport.endTime && Date.now() >= timedExport.endTime) {
-    try { await setExport(tokenData.access, tokenData.apiBase, tokenData.energySiteId, false); } catch (e) {}
-    await store.delete('timed_export_' + deviceId);
+    try {
+      await setExport(tokenData.access, tokenData.apiBase, tokenData.energySiteId, false);
+      await store.delete('timed_export_' + deviceId);
+    } catch (e) {
+      // Only give up after 10 minutes of failed retries to avoid retrying forever
+      if (Date.now() - timedExport.endTime > 10 * 60 * 1000) {
+        await store.delete('timed_export_' + deviceId);
+      }
+    }
   }
 
   // Always fetch live battery % — records SOE history and provides pct for phase logic
@@ -276,6 +283,14 @@ async function processUser(store, deviceId) {
       await store.set('soe_history_' + deviceId, JSON.stringify(soeHistory.filter(r => r.t > cutoff)));
     }
   } catch (e) {}
+
+  const pctExport = JSON.parse(await store.get('pct_export_' + deviceId) || 'null');
+  if (pctExport && pctExport.targetPct !== undefined && currentPct >= 0 && currentPct <= pctExport.targetPct + 4) {
+    try {
+      await setExport(tokenData.access, tokenData.apiBase, tokenData.energySiteId, false);
+      await store.delete('pct_export_' + deviceId);
+    } catch (e) {}
+  }
 
   if (pendingCmd && tokenData.vehicleId) {
     const { access, apiBase } = tokenData;
