@@ -1982,9 +1982,11 @@ function renderHolidayUI(data) {
   const strategyCard = document.getElementById('hol-strategy-card');
   const summaryEl = document.getElementById('hol-strategy-summary');
   const slotsEl = document.getElementById('hol-strategy-slots');
-  if (strategyCard) strategyCard.style.display = (enabled && targetSlots.length > 0) ? '' : 'none';
-  if (summaryEl && enabled && targetSlots.length > 0) {
-    summaryEl.innerHTML = 'Targeting <strong>' + slotsAvailable + '</strong> slot' + (slotsAvailable !== 1 ? 's' : '') + ' at <strong>' + (threshold > 0 ? threshold.toFixed(1) + 'p' : '—') + '</strong> or above — battery reserved until then.';
+  if (strategyCard) strategyCard.style.display = enabled ? '' : 'none';
+  if (summaryEl && enabled) {
+    summaryEl.innerHTML = targetSlots.length > 0
+      ? 'Targeting <strong>' + slotsAvailable + '</strong> slot' + (slotsAvailable !== 1 ? 's' : '') + ' at <strong>' + (threshold > 0 ? threshold.toFixed(1) + 'p' : '—') + '</strong> or above — battery reserved until then.'
+      : 'Calculating today\'s strategy — check back in a moment…';
   }
   if (slotsEl && enabled && targetSlots.length > 0) {
     const londonNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/London' }));
