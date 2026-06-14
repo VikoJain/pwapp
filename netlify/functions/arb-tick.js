@@ -159,12 +159,14 @@ async function runHolidayMode(state, store, tokenData, currentPctRaw, h, m, devi
         return { time: String(ls.getHours()).padStart(2, '0') + ':' + String(ls.getMinutes()).padStart(2, '0'), rate: s.value };
       }).sort((a, b) => a.time.localeCompare(b.time));
     }
-    state.holidayRatesCache = dayRates;
-    state.holidayRatesCacheDay = currentDateKey;
-    state.holidayRateThreshold = parseFloat(threshold.toFixed(1));
-    state.holidayTotalSlots = dayRates.length;
-    state.holidaySlotsAvailable = slotsAvailable;
-    state.holidayTargetSlots = holidayTargetSlots;
+    if (dayRates.length > 0) {
+      state.holidayRatesCache = dayRates;
+      state.holidayRatesCacheDay = currentDateKey;
+      state.holidayRateThreshold = parseFloat(threshold.toFixed(1));
+      state.holidayTotalSlots = dayRates.length;
+      state.holidaySlotsAvailable = slotsAvailable;
+      state.holidayTargetSlots = holidayTargetSlots;
+    }
   }
 
   if (!inWindow) {
