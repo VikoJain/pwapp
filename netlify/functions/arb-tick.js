@@ -138,6 +138,35 @@ async function runHolidayMode(state, store, tokenData, currentPctRaw, h, m, devi
   const stopMinuteOfDay = stopHour * 60 + stopMinute;
   const inWindow = minuteOfDay >= (5 * 60 + 30) && minuteOfDay < stopMinuteOfDay;
 
+  // Calculate day strategy before window guard — UI needs it even outside operating hours
+  const londonNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/London' }));
+  const currentDateKey = `${londonNow.getFullYear()}-${londonNow.getMonth()}-${londonNow.getDate()}`;
+  if (state.holidayRatesCacheDay !== currentDateKey) {
+    const windowStart = new Date(); windowStart.setHours(5, 30, 0, 0);
+    const stopTimeDate = new Date(); stopTimeDate.setHours(stopHour, stopMinute, 0, 0);
+    const dayRates = await getOctopusRatesForWindow(store, windowStart, stopTimeDate, deviceId);
+    const pctForPlan = currentPctRaw >= 0 ? currentPctRaw : 0;
+    const floorForPlan = state.holidayReserveFloorPct != null ? state.holidayReserveFloorPct : 20;
+    const usableKwh = Math.max(0, (pctForPlan - floorForPlan) / 100 * 13.5);
+    const slotsAvailable = Math.max(1, Math.ceil(usableKwh / 5));
+    let threshold = 0;
+    let holidayTargetSlots = [];
+    if (dayRates.length > 0) {
+      const sorted = [...dayRates].sort((a, b) => b.value - a.value);
+      threshold = sorted[Math.min(slotsAvailable, sorted.length) - 1].value;
+      holidayTargetSlots = sorted.slice(0, slotsAvailable).map(s => {
+        const ls = new Date(new Date(s.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
+        return { time: String(ls.getHours()).padStart(2, '0') + ':' + String(ls.getMinutes()).padStart(2, '0'), rate: s.value };
+      }).sort((a, b) => a.time.localeCompare(b.time));
+    }
+    state.holidayRatesCache = dayRates;
+    state.holidayRatesCacheDay = currentDateKey;
+    state.holidayRateThreshold = parseFloat(threshold.toFixed(1));
+    state.holidayTotalSlots = dayRates.length;
+    state.holidaySlotsAvailable = slotsAvailable;
+    state.holidayTargetSlots = holidayTargetSlots;
+  }
+
   if (!inWindow) {
     if (state.holidayExporting) {
       try { await setExport(access, apiBase, siteId, false); await setMode(access, apiBase, siteId, 'autonomous', 0); } catch(e) {}
@@ -183,32 +212,6 @@ async function runHolidayMode(state, store, tokenData, currentPctRaw, h, m, devi
   const rate = await getOctopusRate(store, deviceId);
   state.holidayCurrentRate = rate;
 
-  // Cache rates once per calendar day — threshold fixed at day start using battery-aware slot count
-  const londonNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/London' }));
-  const currentDateKey = `${londonNow.getFullYear()}-${londonNow.getMonth()}-${londonNow.getDate()}`;
-  if (state.holidayRatesCacheDay !== currentDateKey) {
-    const windowStart = new Date(); windowStart.setHours(5, 30, 0, 0);
-    const stopTimeDate = new Date(); stopTimeDate.setHours(stopHour, stopMinute, 0, 0);
-    const dayRates = await getOctopusRatesForWindow(store, windowStart, stopTimeDate, deviceId);
-    const usableKwh = Math.max(0, (pct - reserveFloorPct) / 100 * 13.5);
-    const slotsAvailable = Math.max(1, Math.ceil(usableKwh / 5));
-    let threshold = 0;
-    let holidayTargetSlots = [];
-    if (dayRates.length > 0) {
-      const sorted = [...dayRates].sort((a, b) => b.value - a.value);
-      threshold = sorted[Math.min(slotsAvailable, sorted.length) - 1].value;
-      holidayTargetSlots = sorted.slice(0, slotsAvailable).map(s => {
-        const ls = new Date(new Date(s.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
-        return { time: String(ls.getHours()).padStart(2, '0') + ':' + String(ls.getMinutes()).padStart(2, '0'), rate: s.value };
-      }).sort((a, b) => a.time.localeCompare(b.time));
-    }
-    state.holidayRatesCache = dayRates;
-    state.holidayRatesCacheDay = currentDateKey;
-    state.holidayRateThreshold = parseFloat(threshold.toFixed(1));
-    state.holidayTotalSlots = dayRates.length;
-    state.holidaySlotsAvailable = slotsAvailable;
-    state.holidayTargetSlots = holidayTargetSlots;
-  }
   const dayRates = state.holidayRatesCache || [];
   const threshold = state.holidayRateThreshold || 0;
 
