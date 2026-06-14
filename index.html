@@ -575,9 +575,15 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <div><div class="settings-lbl">Stop exporting at</div><div class="settings-sub">Leaves time before overnight cycle</div></div>
           <input class="settings-inp" type="time" id="hol-stop-time" value="23:00" />
         </div>
-        <div style="font-size:11px;color:#8e8e93;margin-top:6px;line-height:1.5">The app automatically picks the best third of today's remaining Agile slots to export — no rate threshold to set.</div>
+        <div style="font-size:11px;color:#8e8e93;margin-top:6px;line-height:1.5">The app plans today's best export slots at the start of the day using your battery level and Agile rates — no threshold to set.</div>
         <button class="btn-primary" style="margin-top:12px" onclick="saveHolidaySettings()">Save settings</button>
         <div id="hol-settings-result" style="font-size:12px;margin-top:8px;min-height:16px"></div>
+      </div>
+
+      <div class="card" id="hol-strategy-card" style="display:none">
+        <div class="card-title">Today's strategy</div>
+        <div id="hol-strategy-summary" style="font-size:13px;color:#636366;margin-bottom:12px"></div>
+        <div id="hol-strategy-slots"></div>
       </div>
 
       <div class="card">
@@ -1958,17 +1964,46 @@ function renderHolidayUI(data) {
   }
 
   const threshold = data.holidayRateThreshold;
-  const totalSlots = data.holidayTotalSlots || 0;
+  const slotsAvailable = data.holidaySlotsAvailable || 0;
+  const targetSlots = data.holidayTargetSlots || [];
+
   const barEl = document.getElementById('hol-status-bar');
   if (barEl) {
     if (!enabled) { barEl.textContent = 'Enable holiday mode to begin.'; }
-    else if (exporting) { barEl.textContent = 'Exporting at ' + (currentRate > 0 ? currentRate.toFixed(1) + 'p' : '—p') + ' — top-third slot (threshold ' + (threshold > 0 ? threshold.toFixed(1) + 'p' : '—') + ')'; }
+    else if (exporting) { barEl.textContent = 'Exporting at ' + (currentRate > 0 ? currentRate.toFixed(1) + 'p' : '—p') + ' — target slot (threshold ' + (threshold > 0 ? threshold.toFixed(1) + 'p' : '—') + ')'; }
     else if (samples < 3) { barEl.textContent = 'Measuring standby consumption — check back in a few minutes…'; }
     else if (reserveFloor != null && data.holidayExporting === false && currentRate > 0 && threshold > 0) {
       barEl.textContent = currentRate < threshold
-        ? 'Rate ' + currentRate.toFixed(1) + 'p — below top-third threshold (' + threshold.toFixed(1) + 'p of ' + totalSlots + ' remaining slots)'
+        ? 'Rate ' + currentRate.toFixed(1) + 'p — holding battery for target slots (threshold ' + threshold.toFixed(1) + 'p)'
         : 'Reserve floor reached — holding ' + reserveFloor + '% for standby';
     } else { barEl.textContent = 'Active — monitoring rates'; }
+  }
+
+  const strategyCard = document.getElementById('hol-strategy-card');
+  const summaryEl = document.getElementById('hol-strategy-summary');
+  const slotsEl = document.getElementById('hol-strategy-slots');
+  if (strategyCard) strategyCard.style.display = (enabled && targetSlots.length > 0) ? '' : 'none';
+  if (summaryEl && enabled && targetSlots.length > 0) {
+    summaryEl.innerHTML = 'Targeting <strong>' + slotsAvailable + '</strong> slot' + (slotsAvailable !== 1 ? 's' : '') + ' at <strong>' + (threshold > 0 ? threshold.toFixed(1) + 'p' : '—') + '</strong> or above — battery reserved until then.';
+  }
+  if (slotsEl && enabled && targetSlots.length > 0) {
+    const londonNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/London' }));
+    const nowMins = londonNow.getHours() * 60 + londonNow.getMinutes();
+    slotsEl.innerHTML = targetSlots.map(s => {
+      const [sh, sm] = s.time.split(':').map(Number);
+      const slotMins = sh * 60 + sm;
+      const isPast = slotMins + 30 <= nowMins;
+      const isCurrent = slotMins <= nowMins && nowMins < slotMins + 30;
+      const pillStyle = isCurrent
+        ? 'background:#d1fae5;color:#065f46'
+        : isPast ? 'background:#f2f2f7;color:#8e8e93' : 'background:#dbeafe;color:#1d4ed8';
+      const pillText = isCurrent ? 'now' : isPast ? 'done' : 'upcoming';
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f2f2f7">'
+        + '<span style="font-size:14px;font-weight:600">' + s.time + '</span>'
+        + '<span style="font-size:14px;color:#636366">' + s.rate.toFixed(1) + 'p</span>'
+        + '<span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;' + pillStyle + '">' + pillText + '</span>'
+        + '</div>';
+    }).join('');
   }
 
   const kwhEl = document.getElementById('hol-kwh');
