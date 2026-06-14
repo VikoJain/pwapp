@@ -183,24 +183,30 @@ async function runHolidayMode(state, store, tokenData, currentPctRaw, h, m, devi
   const rate = await getOctopusRate(store, deviceId);
   state.holidayCurrentRate = rate;
 
-  const currentSlot30 = Math.floor(minuteOfDay / 30);
-  if (state.holidayRatesCacheSlot !== currentSlot30) {
+  // Cache rates once per calendar day — threshold fixed at day start using battery-aware slot count
+  const londonNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/London' }));
+  const currentDateKey = `${londonNow.getFullYear()}-${londonNow.getMonth()}-${londonNow.getDate()}`;
+  if (state.holidayRatesCacheDay !== currentDateKey) {
+    const windowStart = new Date(); windowStart.setHours(5, 30, 0, 0);
     const stopTimeDate = new Date(); stopTimeDate.setHours(stopHour, stopMinute, 0, 0);
-    const remainingRates = await getOctopusRatesForWindow(store, new Date(), stopTimeDate, deviceId);
-    state.holidayRatesCache = remainingRates;
-    state.holidayRatesCacheSlot = currentSlot30;
+    const dayRates = await getOctopusRatesForWindow(store, windowStart, stopTimeDate, deviceId);
+    const usableKwh = Math.max(0, (pct - reserveFloorPct) / 100 * 13.5);
+    const slotsAvailable = Math.max(1, Math.ceil(usableKwh / 5));
+    let threshold = 0;
+    if (dayRates.length > 0) {
+      const sorted = [...dayRates].sort((a, b) => b - a);
+      threshold = sorted[Math.min(slotsAvailable, sorted.length) - 1];
+    }
+    state.holidayRatesCache = dayRates;
+    state.holidayRatesCacheDay = currentDateKey;
+    state.holidayRateThreshold = parseFloat(threshold.toFixed(1));
+    state.holidayTotalSlots = dayRates.length;
+    state.holidaySlotsAvailable = slotsAvailable;
   }
-  const remainingRates = state.holidayRatesCache || [];
+  const dayRates = state.holidayRatesCache || [];
+  const threshold = state.holidayRateThreshold || 0;
 
-  let topThirdThreshold = 0;
-  if (remainingRates.length > 0) {
-    const sorted = [...remainingRates].sort((a, b) => b - a);
-    topThirdThreshold = sorted[Math.max(1, Math.ceil(sorted.length / 3)) - 1];
-  }
-  state.holidayRateThreshold = parseFloat(topThirdThreshold.toFixed(1));
-  state.holidayTotalSlots = remainingRates.length;
-
-  const inTopThird = rate > 0 && remainingRates.length > 0 && rate >= topThirdThreshold;
+  const inTopThird = rate > 0 && dayRates.length > 0 && rate >= threshold;
   const shouldExport = pctInt > reserveFloorPct && inTopThird;
 
   if (shouldExport && !state.holidayExporting) {
@@ -209,7 +215,7 @@ async function runHolidayMode(state, store, tokenData, currentPctRaw, h, m, devi
       await setExport(access, apiBase, siteId, true);
       state.holidayExporting = true;
       state.holidayExportStart = { pct, time: now, rate };
-      log(state, 'Holiday: export on — ' + rate.toFixed(1) + 'p (top third, threshold ' + topThirdThreshold.toFixed(1) + 'p), battery ' + pctInt + '%, floor ' + reserveFloorPct + '%');
+      log(state, 'Holiday: export on — ' + rate.toFixed(1) + 'p (threshold ' + threshold.toFixed(1) + 'p, ' + (state.holidaySlotsAvailable || '?') + ' slots target), battery ' + pctInt + '%, floor ' + reserveFloorPct + '%');
     } catch(e) { log(state, 'Holiday: export start error: ' + e.message); }
   } else if (!shouldExport && state.holidayExporting) {
     try {
@@ -232,7 +238,7 @@ async function runHolidayMode(state, store, tokenData, currentPctRaw, h, m, devi
         state.holidayExportStart = null;
         const reason = pctInt <= reserveFloorPct
           ? 'reserve floor reached (' + pctInt + '% ≤ ' + reserveFloorPct + '%)'
-          : 'rate ' + rate.toFixed(1) + 'p below top-third threshold (' + topThirdThreshold.toFixed(1) + 'p)';
+          : 'rate ' + rate.toFixed(1) + 'p below threshold (' + threshold.toFixed(1) + 'p)';
         log(state, 'Holiday: export off — ' + reason + ' · ~' + netExportedKwh + ' kWh · £' + periodEarned);
       }
     } catch(e) { log(state, 'Holiday: export stop error: ' + e.message); }
