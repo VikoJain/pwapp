@@ -116,7 +116,7 @@ async function getOctopusRatesForWindow(store, periodFrom, periodTo, deviceId) {
     const authHeader = 'Basic ' + Buffer.from(settings.octKey + ':').toString('base64');
     const res = await makeRequest({ hostname: 'api.octopus.energy', path, method: 'GET', headers: { 'Authorization': authHeader } }, null);
     const data = JSON.parse(res.body);
-    if (data.results && data.results.length) return data.results.map(r => parseFloat(parseFloat(r.value_inc_vat).toFixed(2)));
+    if (data.results && data.results.length) return data.results.map(r => ({ value: parseFloat(parseFloat(r.value_inc_vat).toFixed(2)), validFrom: r.valid_from }));
   } catch (e) {}
   return [];
 }
@@ -193,15 +193,21 @@ async function runHolidayMode(state, store, tokenData, currentPctRaw, h, m, devi
     const usableKwh = Math.max(0, (pct - reserveFloorPct) / 100 * 13.5);
     const slotsAvailable = Math.max(1, Math.ceil(usableKwh / 5));
     let threshold = 0;
+    let holidayTargetSlots = [];
     if (dayRates.length > 0) {
-      const sorted = [...dayRates].sort((a, b) => b - a);
-      threshold = sorted[Math.min(slotsAvailable, sorted.length) - 1];
+      const sorted = [...dayRates].sort((a, b) => b.value - a.value);
+      threshold = sorted[Math.min(slotsAvailable, sorted.length) - 1].value;
+      holidayTargetSlots = sorted.slice(0, slotsAvailable).map(s => {
+        const ls = new Date(new Date(s.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
+        return { time: String(ls.getHours()).padStart(2, '0') + ':' + String(ls.getMinutes()).padStart(2, '0'), rate: s.value };
+      }).sort((a, b) => a.time.localeCompare(b.time));
     }
     state.holidayRatesCache = dayRates;
     state.holidayRatesCacheDay = currentDateKey;
     state.holidayRateThreshold = parseFloat(threshold.toFixed(1));
     state.holidayTotalSlots = dayRates.length;
     state.holidaySlotsAvailable = slotsAvailable;
+    state.holidayTargetSlots = holidayTargetSlots;
   }
   const dayRates = state.holidayRatesCache || [];
   const threshold = state.holidayRateThreshold || 0;
