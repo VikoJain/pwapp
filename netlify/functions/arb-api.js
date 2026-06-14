@@ -88,6 +88,8 @@ exports.handler = async (event) => {
           state.holidayNonExportStart = null;
           state.holidayExportStart = null;
           state.holidayExporting = false;
+          state.holidayRatesCacheDay = null;
+          state.holidayTargetSlots = [];
         } else {
           state.holidayExporting = false;
         }
