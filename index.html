@@ -1957,21 +1957,24 @@ function toggleCarSync() {
 }
 
 function setCarSyncPriority(priority) {
+  const active = 'flex:1;padding:8px;border-radius:8px;border:1.5px solid #007aff;font-size:13px;font-weight:600;background:#007aff;color:#fff;cursor:pointer';
+  const inactive = 'flex:1;padding:8px;border-radius:8px;border:1.5px solid #e5e5ea;font-size:13px;font-weight:600;background:#f2f2f7;color:#1c1c1e;cursor:pointer';
   const exportBtn = document.getElementById('car-sync-pri-export');
   const carBtn = document.getElementById('car-sync-pri-car');
-  const activeStyle = 'border:1.5px solid #007aff;background:#007aff;color:#fff';
-  const inactiveStyle = 'border:1.5px solid #e5e5ea;background:#f2f2f7;color:#1c1c1e';
-  if (exportBtn) exportBtn.style.cssText = exportBtn.style.cssText.replace(/border[^;]+;background[^;]+;color[^;]+/, priority === 'export' ? activeStyle : inactiveStyle);
-  if (carBtn) carBtn.style.cssText = carBtn.style.cssText.replace(/border[^;]+;background[^;]+;color[^;]+/, priority === 'car' ? activeStyle : inactiveStyle);
-  saveCarSyncSettings();
+  if (exportBtn) exportBtn.setAttribute('style', priority === 'export' ? active : inactive);
+  if (carBtn) carBtn.setAttribute('style', priority === 'car' ? active : inactive);
+  saveCarSyncSettings(priority);
 }
 
-function saveCarSyncSettings() {
+function saveCarSyncSettings(priority) {
+  if (priority === undefined) {
+    const carBtn = document.getElementById('car-sync-pri-car');
+    priority = carBtn && (carBtn.getAttribute('style') || '').includes('007aff') ? 'car' : 'export';
+  }
   const enabled = document.getElementById('car-sync-toggle').classList.contains('on');
-  const carFirst = document.getElementById('car-sync-pri-car').style.background.includes('007aff');
   fetch('/.netlify/functions/arb-api', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'save_car_sync_settings', enabled, priority: carFirst ? 'car' : 'export', device_id: getDeviceId() })
+    body: JSON.stringify({ action: 'save_car_sync_settings', enabled, priority, device_id: getDeviceId() })
   }).catch(() => {});
 }
 
