@@ -124,7 +124,7 @@ async function getOctopusRatesForWindow(store, periodFrom, periodTo, deviceId) {
 async function wakeVehicle(token, apiBase, vehicleId) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/wake_up`, {}); }
 async function getVehicleState(token, apiBase, vehicleId) { const d = await teslaGet(token, apiBase, `/api/1/vehicles/${vehicleId}`); return d.response?.state || 'unknown'; }
 async function getVehicleChargeState(token, apiBase, vehicleId) {
-  const d = await teslaGet(token, apiBase, `/api/1/vehicles/${vehicleId}/vehicle_data`);
+  const d = await teslaGet(token, apiBase, `/api/1/vehicles/${vehicleId}/vehicle_data?endpoints=charge_state`);
   return d.response?.charge_state?.charging_state || 'Unknown';
 }
 async function vehicleChargeStop(token, apiBase, vehicleId) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/command/charge_stop`, {}); }
@@ -277,6 +277,12 @@ async function runCarSync(state, store, tokenData, settings, deviceId) {
     }
     return;
   }
+
+  // Rate-limit vehicle checks: every 5 min when idle, every 1 min when actively syncing
+  const now = Date.now();
+  const checkInterval = state.carSyncActive ? 60000 : 5 * 60 * 1000;
+  if (state.carSyncLastCheck && (now - state.carSyncLastCheck) < checkInterval) return;
+  state.carSyncLastCheck = now;
 
   // Skip charge state check if vehicle is asleep — sleeping cars are never charging
   let vehicleCharging = false;
