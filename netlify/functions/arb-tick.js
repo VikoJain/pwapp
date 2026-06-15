@@ -123,6 +123,10 @@ async function getOctopusRatesForWindow(store, periodFrom, periodTo, deviceId) {
 
 async function wakeVehicle(token, apiBase, vehicleId) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/wake_up`, {}); }
 async function getVehicleState(token, apiBase, vehicleId) { const d = await teslaGet(token, apiBase, `/api/1/vehicles/${vehicleId}`); return d.response?.state || 'unknown'; }
+async function getVehicleChargeState(token, apiBase, vehicleId) {
+  const d = await teslaGet(token, apiBase, `/api/1/vehicles/${vehicleId}/vehicle_data`);
+  return d.response?.charge_state?.charging_state || 'Unknown';
+}
 async function vehicleChargeStop(token, apiBase, vehicleId) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/command/charge_stop`, {}); }
 async function vehicleSetChargeLimit(token, apiBase, vehicleId, percent) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/command/set_charge_limit`, { percent }); }
 async function vehicleChargeStart(token, apiBase, vehicleId) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/command/charge_start`, {}); }
@@ -256,12 +260,79 @@ async function runHolidayMode(state, store, tokenData, currentPctRaw, h, m, devi
   }
 }
 
+async function runCarSync(state, store, tokenData, settings, deviceId) {
+  if (!tokenData.vehicleId) return;
+  const { access, apiBase, energySiteId: siteId } = tokenData;
+  const priority = settings.priority || 'export';
+  const arbExporting = state.phase === 2;
+  const holidayExporting = !!state.holidayExporting;
+  const isExporting = arbExporting || holidayExporting;
+
+  // Export priority: stay dormant while actively exporting
+  if (isExporting && priority === 'export') {
+    if (state.carSyncActive) {
+      try { await setMode(access, apiBase, siteId, 'autonomous', 0); } catch(e) {}
+      state.carSyncActive = false;
+      state.carChargingSince = null;
+    }
+    return;
+  }
+
+  // Skip charge state check if vehicle is asleep — sleeping cars are never charging
+  let vehicleCharging = false;
+  try {
+    const vState = await getVehicleState(access, apiBase, tokenData.vehicleId);
+    if (vState === 'online') {
+      const chargeState = await getVehicleChargeState(access, apiBase, tokenData.vehicleId);
+      vehicleCharging = chargeState === 'Charging';
+    }
+  } catch(e) { return; }
+
+  if (vehicleCharging) {
+    if (!state.carChargingSince) state.carChargingSince = Date.now();
+    const minsCharging = (Date.now() - state.carChargingSince) / 60000;
+    if (minsCharging >= 2 && !state.carSyncActive) {
+      if (isExporting && priority === 'car') {
+        try { await setExport(access, apiBase, siteId, false); } catch(e) {}
+        state.carSyncPausedExport = true;
+        log(state, 'Car sync: pausing export — charging battery with car');
+      }
+      try {
+        await setMode(access, apiBase, siteId, 'autonomous', 100);
+        state.carSyncActive = true;
+        log(state, 'Car sync: active — battery charging with car (reserve 100%)');
+      } catch(e) { log(state, 'Car sync start error: ' + e.message); }
+    }
+  } else {
+    state.carChargingSince = null;
+    if (state.carSyncActive) {
+      try {
+        await setMode(access, apiBase, siteId, 'autonomous', 0);
+        state.carSyncActive = false;
+        if (state.carSyncPausedExport) {
+          state.carSyncPausedExport = false;
+          if (state.phase === 2 || state.holidayExporting) {
+            try { await setExport(access, apiBase, siteId, true); } catch(e) {}
+            log(state, 'Car sync: car stopped — reserve reset, export resumed');
+          } else {
+            log(state, 'Car sync: car stopped — reserve reset to 0%');
+          }
+        } else {
+          log(state, 'Car sync: car stopped — reserve reset to 0%');
+        }
+      } catch(e) { log(state, 'Car sync stop error: ' + e.message); }
+    }
+  }
+}
+
 async function processUser(store, deviceId) {
   const state = JSON.parse(await store.get('state_' + deviceId) || JSON.stringify(DEFAULT_STATE));
   const pendingCmd = JSON.parse(await store.get('pending_vehicle_cmd_' + deviceId) || 'null');
 
   let tokenData = JSON.parse(await store.get('token_' + deviceId) || 'null');
   if (!tokenData) return;
+  const carSyncSettings = JSON.parse(await store.get('car_sync_settings_' + deviceId) || 'null');
+  const carSyncEnabled = !!(carSyncSettings && carSyncSettings.enabled && tokenData.vehicleId);
 
   if (tokenData.expiry && Date.now() > tokenData.expiry - 120000) {
     try {
@@ -335,10 +406,10 @@ async function processUser(store, deviceId) {
       } catch (e) { log(state, 'Vehicle command error: ' + e.message); }
     }
     await store.set('state_' + deviceId, JSON.stringify(state));
-    if (!state.enabled && state.phase === 0) return;
+    if (!state.enabled && state.phase === 0 && !carSyncEnabled) return;
   }
 
-  if (!state.enabled && state.phase === 0 && !state.holidayEnabled) {
+  if (!state.enabled && state.phase === 0 && !state.holidayEnabled && !carSyncEnabled) {
     return;
   }
 
@@ -438,6 +509,11 @@ async function processUser(store, deviceId) {
   if (state.holidayEnabled && state.phase === 0) {
     try { await runHolidayMode(state, store, tokenData, currentPct, h, m, deviceId); }
     catch (e) { log(state, 'Holiday error: ' + e.message); }
+  }
+
+  if (carSyncEnabled) {
+    try { await runCarSync(state, store, tokenData, carSyncSettings, deviceId); }
+    catch (e) { log(state, 'Car sync error: ' + e.message); }
   }
 
   await store.set('state_' + deviceId, JSON.stringify(state));
