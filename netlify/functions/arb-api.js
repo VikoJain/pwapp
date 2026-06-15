@@ -40,7 +40,8 @@ exports.handler = async (event) => {
       const state = JSON.parse(await store.get(k('state')) || DEFAULT_STATE);
       const arbSettings = JSON.parse(await store.get(k('arb_settings')) || 'null');
       const holidaySettings = JSON.parse(await store.get(k('holiday_settings')) || 'null');
-      return { statusCode: 200, headers: CORS, body: JSON.stringify({ ...state, arbSettings, holidaySettings }) };
+      const carSyncSettings = JSON.parse(await store.get(k('car_sync_settings')) || 'null');
+      return { statusCode: 200, headers: CORS, body: JSON.stringify({ ...state, arbSettings, holidaySettings, carSyncSettings }) };
     }
 
     if (event.httpMethod === 'POST') {
@@ -122,6 +123,14 @@ exports.handler = async (event) => {
 
       if (body.action === 'clear_pct_export') {
         await store.delete(k('pct_export'));
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
+
+      if (body.action === 'save_car_sync_settings') {
+        await store.set(k('car_sync_settings'), JSON.stringify({
+          enabled: !!body.enabled,
+          priority: body.priority === 'car' ? 'car' : 'export'
+        }));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
 
