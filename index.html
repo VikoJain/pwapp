@@ -476,6 +476,25 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       </div>
 
       <div class="card">
+        <div class="card-title">Octopus car sync</div>
+        <div class="arb-toggle-row" style="margin-bottom:0">
+          <div>
+            <div class="arb-toggle-lbl">Sync battery with car</div>
+            <div class="arb-toggle-sub">Charges battery whenever Octopus charges your car</div>
+          </div>
+          <button class="toggle" id="car-sync-toggle" onclick="toggleCarSync()"></button>
+        </div>
+        <div id="car-sync-detail" style="display:none;margin-top:14px">
+          <div style="font-size:11px;font-weight:600;color:#8e8e93;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">When battery is exporting and car charges</div>
+          <div style="display:flex;gap:8px;margin-bottom:12px">
+            <button id="car-sync-pri-export" onclick="setCarSyncPriority('export')" style="flex:1;padding:8px;border-radius:8px;border:1.5px solid #007aff;font-size:13px;font-weight:600;background:#007aff;color:#fff;cursor:pointer">Export first</button>
+            <button id="car-sync-pri-car" onclick="setCarSyncPriority('car')" style="flex:1;padding:8px;border-radius:8px;border:1.5px solid #e5e5ea;font-size:13px;font-weight:600;background:#f2f2f7;color:#1c1c1e;cursor:pointer">Car first</button>
+          </div>
+          <div class="status-bar" id="car-sync-status">Monitoring — car not charging</div>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-title">Last night's earnings</div>
         <div class="arb-earnings">
           <div class="arb-earn-card"><div class="arb-earn-val" id="arb-kwh">—</div><div class="arb-earn-lbl">kWh exported</div></div>
@@ -1520,6 +1539,7 @@ async function pollServerStatus() {
     if (data.holidaySettings) populateHolidaySettings(data.holidaySettings);
     renderArbUI();
     renderHolidayUI(data);
+    renderCarSyncUI(data);
   } catch(e) {}
 }
 
@@ -1926,6 +1946,66 @@ function populateHolidaySettings(s) {
   if (!s) return;
   const stopEl = document.getElementById('hol-stop-time');
   if (stopEl) stopEl.value = fmt2(s.stopHour !== undefined ? s.stopHour : 23) + ':' + fmt2(s.stopMinute !== undefined ? s.stopMinute : 0);
+}
+
+function toggleCarSync() {
+  const toggle = document.getElementById('car-sync-toggle');
+  const newState = !toggle.classList.contains('on');
+  toggle.classList.toggle('on', newState);
+  document.getElementById('car-sync-detail').style.display = newState ? '' : 'none';
+  saveCarSyncSettings();
+}
+
+function setCarSyncPriority(priority) {
+  const exportBtn = document.getElementById('car-sync-pri-export');
+  const carBtn = document.getElementById('car-sync-pri-car');
+  const activeStyle = 'border:1.5px solid #007aff;background:#007aff;color:#fff';
+  const inactiveStyle = 'border:1.5px solid #e5e5ea;background:#f2f2f7;color:#1c1c1e';
+  if (exportBtn) exportBtn.style.cssText = exportBtn.style.cssText.replace(/border[^;]+;background[^;]+;color[^;]+/, priority === 'export' ? activeStyle : inactiveStyle);
+  if (carBtn) carBtn.style.cssText = carBtn.style.cssText.replace(/border[^;]+;background[^;]+;color[^;]+/, priority === 'car' ? activeStyle : inactiveStyle);
+  saveCarSyncSettings();
+}
+
+function saveCarSyncSettings() {
+  const enabled = document.getElementById('car-sync-toggle').classList.contains('on');
+  const carFirst = document.getElementById('car-sync-pri-car').style.background.includes('007aff');
+  fetch('/.netlify/functions/arb-api', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'save_car_sync_settings', enabled, priority: carFirst ? 'car' : 'export', device_id: getDeviceId() })
+  }).catch(() => {});
+}
+
+function renderCarSyncUI(data) {
+  data = data || {};
+  const settings = data.carSyncSettings || {};
+  const enabled = !!settings.enabled;
+  const priority = settings.priority || 'export';
+  const active = !!data.carSyncActive;
+  const chargingSince = data.carChargingSince;
+
+  const toggle = document.getElementById('car-sync-toggle');
+  const detail = document.getElementById('car-sync-detail');
+  const status = document.getElementById('car-sync-status');
+  const exportBtn = document.getElementById('car-sync-pri-export');
+  const carBtn = document.getElementById('car-sync-pri-car');
+
+  if (toggle) toggle.classList.toggle('on', enabled);
+  if (detail) detail.style.display = enabled ? '' : 'none';
+
+  const activeStyle = 'flex:1;padding:8px;border-radius:8px;border:1.5px solid #007aff;font-size:13px;font-weight:600;background:#007aff;color:#fff;cursor:pointer';
+  const inactiveStyle = 'flex:1;padding:8px;border-radius:8px;border:1.5px solid #e5e5ea;font-size:13px;font-weight:600;background:#f2f2f7;color:#1c1c1e;cursor:pointer';
+  if (exportBtn) exportBtn.style.cssText = priority === 'export' ? activeStyle : inactiveStyle;
+  if (carBtn) carBtn.style.cssText = priority === 'car' ? activeStyle : inactiveStyle;
+
+  if (status && enabled) {
+    if (active) {
+      status.textContent = 'Syncing — battery charging with car';
+    } else if (chargingSince) {
+      status.textContent = 'Car charging detected — confirming…';
+    } else {
+      status.textContent = 'Monitoring — car not charging';
+    }
+  }
 }
 
 function renderHolidayUI(data) {
