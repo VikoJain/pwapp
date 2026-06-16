@@ -448,12 +448,15 @@ async function processUser(store, deviceId) {
         await setMode(access, apiBase, siteId, 'autonomous', 0);
         await setExport(access, apiBase, siteId, true);
         log(state, 'Phase 2: Export enabled' + (rate > 0 ? ' at ' + rate.toFixed(1) + 'p/kWh' : ' (rate unavailable — will retry)'));
-        if (s.carControlEnabled && tokenData.vehicleId) {
+        const carSyncCarFirst = carSyncEnabled && carSyncSettings.priority === 'car';
+        if (s.carControlEnabled && tokenData.vehicleId && !carSyncCarFirst) {
           try {
             await wakeVehicle(access, apiBase, tokenData.vehicleId);
             await store.set('pending_vehicle_cmd_' + deviceId, JSON.stringify({ cmd: 'charge_stop', chargeLimit: s.carChargeLimitPhase2 || 50, requestedAt: Date.now() }));
             log(state, 'Vehicle: wake-up sent — charging will stop shortly');
           } catch (e) { log(state, 'Vehicle wake error: ' + e.message); }
+        } else if (carSyncCarFirst) {
+          log(state, 'Phase 2: car sync priority set to car — skipping charge stop');
         }
       }
     }
