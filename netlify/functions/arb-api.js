@@ -13,8 +13,14 @@ exports.handler = async (event) => {
     const { getStore } = require('@netlify/blobs');
     const store = getStore({ name: 'arb', siteID: process.env.SITE_ID, token: process.env.NETLIFY_API_TOKEN });
 
-    // Extract device_id from query string (GET) or body (POST)
     const qp = event.queryStringParameters || {};
+
+    // Endpoints that don't require device_id
+    if (event.httpMethod === 'GET' && qp.type === 'vapid_public_key') {
+      return { statusCode: 200, headers: CORS, body: JSON.stringify({ publicKey: process.env.VAPID_PUBLIC_KEY || '' }) };
+    }
+
+    // All other requests require device_id
     const body = event.httpMethod === 'POST' ? JSON.parse(event.body || '{}') : {};
     const device_id = qp.device_id || body.device_id;
 
@@ -131,6 +137,16 @@ exports.handler = async (event) => {
           enabled: !!body.enabled,
           priority: body.priority === 'car' ? 'car' : 'export'
         }));
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
+
+      if (body.action === 'save_push_subscription') {
+        await store.set(k('push_subscription'), JSON.stringify(body.subscription));
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
+
+      if (body.action === 'delete_push_subscription') {
+        await store.delete(k('push_subscription'));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
 
