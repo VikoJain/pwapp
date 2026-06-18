@@ -1,5 +1,6 @@
 {
   "dependencies": {
-    "@netlify/blobs": "^6.0.0"
+    "@netlify/blobs": "^6.0.0",
+    "web-push": "^3.6.7"
   }
 }
