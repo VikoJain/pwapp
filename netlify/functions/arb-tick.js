@@ -68,6 +68,24 @@ async function refreshTeslaToken(tokenData) {
   return JSON.parse(res.body);
 }
 
+async function sendPush(store, deviceId, title, body) {
+  try {
+    const sub = JSON.parse(await store.get('push_subscription_' + deviceId) || 'null');
+    if (!sub) return;
+    const webpush = require('web-push');
+    webpush.setVapidDetails(
+      process.env.VAPID_EMAIL,
+      process.env.VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY
+    );
+    await webpush.sendNotification(sub, JSON.stringify({ title, body }));
+  } catch(e) {
+    if (e.statusCode === 410 || e.statusCode === 404) {
+      try { await store.delete('push_subscription_' + deviceId); } catch(_) {}
+    }
+  }
+}
+
 function log(state, msg) {
   const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   state.log = state.log || [];
@@ -231,6 +249,7 @@ async function runHolidayMode(state, store, tokenData, currentPctRaw, h, m, devi
       state.holidayExporting = true;
       state.holidayExportStart = { pct, time: now, rate };
       log(state, 'Holiday: export on — ' + rate.toFixed(1) + 'p (threshold ' + threshold.toFixed(1) + 'p, ' + (state.holidaySlotsAvailable || '?') + ' slots target), battery ' + pctInt + '%, floor ' + reserveFloorPct + '%');
+      await sendPush(store, deviceId, 'Holiday export started', rate.toFixed(1) + 'p/kWh · Battery at ' + pctInt + '%');
     } catch(e) { log(state, 'Holiday: export start error: ' + e.message); }
   } else if (!shouldExport && state.holidayExporting) {
     try {
@@ -255,6 +274,7 @@ async function runHolidayMode(state, store, tokenData, currentPctRaw, h, m, devi
           ? 'reserve floor reached (' + pctInt + '% ≤ ' + reserveFloorPct + '%)'
           : 'rate ' + rate.toFixed(1) + 'p below threshold (' + threshold.toFixed(1) + 'p)';
         log(state, 'Holiday: export off — ' + reason + ' · ~' + netExportedKwh + ' kWh · £' + periodEarned);
+        await sendPush(store, deviceId, 'Holiday export ended', '~' + netExportedKwh + ' kWh · Est. £' + periodEarned);
       }
     } catch(e) { log(state, 'Holiday: export stop error: ' + e.message); }
   }
@@ -311,6 +331,7 @@ async function runCarSync(state, store, tokenData, settings, deviceId) {
           await setMode(access, apiBase, siteId, 'autonomous', 100);
           state.carSyncActive = true;
           log(state, 'Car sync: active — battery charging with car (reserve 100%)');
+          await sendPush(store, deviceId, 'Car detected charging', state.carSyncPausedExport ? 'Battery charging with car · Export paused' : 'Battery charging alongside car');
         } catch(e) { log(state, 'Car sync start error: ' + e.message); }
       }
     }
@@ -327,13 +348,16 @@ async function runCarSync(state, store, tokenData, settings, deviceId) {
           if (state.phase === 2 || state.holidayExporting) {
             try { await setExport(access, apiBase, siteId, true); } catch(e) {}
             log(state, 'Car sync: car stopped — reserve reset, export resumed');
+            await sendPush(store, deviceId, 'Car finished charging', 'Export resumed');
           } else if (state.phase === 3) {
             log(state, 'Car sync: car stopped — Phase 3 active, reserve kept at 100%');
+            await sendPush(store, deviceId, 'Car finished charging', 'Battery recharge continuing');
           } else {
             log(state, 'Car sync: car stopped — reserve reset to 0%');
           }
         } else if (state.phase === 3) {
           log(state, 'Car sync: car stopped — Phase 3 active, reserve kept at 100%');
+          await sendPush(store, deviceId, 'Car finished charging', 'Battery recharge continuing');
         } else {
           log(state, 'Car sync: car stopped — reserve reset to 0%');
         }
@@ -445,6 +469,7 @@ async function processUser(store, deviceId) {
       log(state, '=== Arbitrage cycle started ===');
       await setMode(access, apiBase, siteId, 'autonomous', chargeTargetPct);
       log(state, 'Phase 1: Reserve set to ' + chargeTargetPct + '% — charging from grid');
+      await sendPush(store, deviceId, 'Overnight cycle started', 'Charging battery to ' + chargeTargetPct + '%');
     }
     else if (state.phase === 1) {
       if (m % 10 === 0) log(state, 'Phase 1 charging — battery at ' + pct + '%');
@@ -459,6 +484,7 @@ async function processUser(store, deviceId) {
         await setMode(access, apiBase, siteId, 'autonomous', 0);
         await setExport(access, apiBase, siteId, true);
         log(state, 'Phase 2: Export enabled' + (rate > 0 ? ' at ' + rate.toFixed(1) + 'p/kWh' : ' (rate unavailable — will retry)'));
+        await sendPush(store, deviceId, 'Battery charged — exporting now', 'Battery at ' + pct + '%, exporting to grid' + (rate > 0 ? ' at ' + rate.toFixed(1) + 'p/kWh' : ''));
         const carSyncCarFirst = carSyncEnabled && carSyncSettings.priority === 'car';
         if (s.carControlEnabled && tokenData.vehicleId && !carSyncCarFirst) {
           try {
@@ -492,6 +518,7 @@ async function processUser(store, deviceId) {
         await setExport(access, apiBase, siteId, false);
         await setMode(access, apiBase, siteId, 'autonomous', 100);
         log(state, 'Phase 3: Export off — reserve set to 100%, recharging from grid');
+        await sendPush(store, deviceId, 'Export complete — recharging', '~' + kwhExported + ' kWh · Est. £' + earned.toFixed(2) + ' · Battery recharging now');
         if (s.carControlEnabled && tokenData.vehicleId) {
           try {
             await wakeVehicle(access, apiBase, tokenData.vehicleId);
@@ -508,6 +535,7 @@ async function processUser(store, deviceId) {
         log(state, 'Phase 3 complete — battery at ' + pct + '%');
         state.phase = 4;
         log(state, 'Phase 4: Fully charged — standby until ' + fmt2(endHour) + ':' + fmt2(endMinute));
+        await sendPush(store, deviceId, 'Battery fully recharged', 'At ' + pct + '% · Standby until ' + fmt2(endHour) + ':' + fmt2(endMinute));
       }
     }
     else if (state.phase === 4 && h === endHour && m >= endMinute) {
@@ -515,9 +543,11 @@ async function processUser(store, deviceId) {
       await setExport(access, apiBase, siteId, false);
       await setMode(access, apiBase, siteId, 'autonomous', 0);
       log(state, '=== Cycle complete — autonomous mode restored, 0% reserve ===');
+      await sendPush(store, deviceId, 'Overnight cycle complete', 'Normal operation restored · Check Night tab for earnings');
     }
     else if (state.phase > 0 && h >= endHour + 1) {
       log(state, 'Safety fallback at ' + fmt2(h) + ':' + fmt2(m) + ' — restoring normal mode');
+      await sendPush(store, deviceId, 'Safety override triggered', 'Normal mode restored at ' + fmt2(h) + ':' + fmt2(m) + ' — check Night tab');
       state.phase = 0;
       await setExport(access, apiBase, siteId, false);
       await setMode(access, apiBase, siteId, 'autonomous', 0);
