@@ -2005,19 +2005,19 @@ async function toggleNotifications() {
     sub.textContent = 'Tap to enable cycle and car sync alerts';
     what.style.display = 'none';
     localStorage.removeItem('notif_enabled');
-    showToast('Notifications disabled');
+    toast('Notifications disabled');
   } else {
     if (!('Notification' in window) || !('serviceWorker' in navigator)) {
-      showToast('Push notifications not supported on this device'); return;
+      toast('Push notifications not supported on this device'); return;
     }
     const permission = await Notification.requestPermission();
     if (permission !== 'granted') {
       sub.textContent = 'Blocked — enable in your browser or phone settings';
-      showToast('Notification permission denied'); return;
+      toast('Notification permission denied'); return;
     }
     try {
       if (!vapidPublicKey) await loadVapidKey();
-      if (!vapidPublicKey) { showToast('Could not load notification key — try again'); return; }
+      if (!vapidPublicKey) { toast('Could not load notification key — try again'); return; }
       const reg = await navigator.serviceWorker.ready;
       const pushSub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
@@ -2031,9 +2031,9 @@ async function toggleNotifications() {
       sub.textContent = 'Active — you\'ll be notified of cycle events';
       what.style.display = '';
       localStorage.setItem('notif_enabled', '1');
-      showToast('Notifications enabled');
+      toast('Notifications enabled');
     } catch(e) {
-      showToast('Could not enable notifications: ' + e.message);
+      toast('Could not enable notifications: ' + e.message);
     }
   }
 }
