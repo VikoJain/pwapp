@@ -313,16 +313,22 @@ async function runCarSync(state, store, tokenData, settings, deviceId) {
     state.carChargingSince = null;
     if (state.carSyncActive) {
       try {
-        await setMode(access, apiBase, siteId, 'autonomous', 0);
+        // Phase 3 needs reserve at 100% to charge from grid — don't reset it
+        const reserveToRestore = state.phase === 3 ? 100 : 0;
+        await setMode(access, apiBase, siteId, 'autonomous', reserveToRestore);
         state.carSyncActive = false;
         if (state.carSyncPausedExport) {
           state.carSyncPausedExport = false;
           if (state.phase === 2 || state.holidayExporting) {
             try { await setExport(access, apiBase, siteId, true); } catch(e) {}
             log(state, 'Car sync: car stopped — reserve reset, export resumed');
+          } else if (state.phase === 3) {
+            log(state, 'Car sync: car stopped — Phase 3 active, reserve kept at 100%');
           } else {
             log(state, 'Car sync: car stopped — reserve reset to 0%');
           }
+        } else if (state.phase === 3) {
+          log(state, 'Car sync: car stopped — Phase 3 active, reserve kept at 100%');
         } else {
           log(state, 'Car sync: car stopped — reserve reset to 0%');
         }
