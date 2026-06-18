@@ -1,4 +1,4 @@
-const CACHE = 'powerwall-v1';
+const CACHE = 'powerwall-v2';
 const PRECACHE = [
   '/',
   '/index.html',
@@ -58,6 +58,31 @@ self.addEventListener('fetch', e => {
         caches.open(CACHE).then(c => c.put(e.request, clone));
         return resp;
       });
+    })
+  );
+});
+
+self.addEventListener('push', e => {
+  const data = e.data ? e.data.json() : { title: 'Powerwall Manager', body: '' };
+  e.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: '/icon.svg',
+      badge: '/icon.svg',
+      tag: data.tag || 'powerwall',
+      renotify: true
+    })
+  );
+});
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      for (const client of list) {
+        if (client.url.includes(self.location.origin) && 'focus' in client) return client.focus();
+      }
+      return clients.openWindow('/');
     })
   );
 });
