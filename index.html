@@ -1971,7 +1971,8 @@ function populateHolidaySettings(s) {
 let vapidPublicKey = null;
 
 function urlBase64ToUint8Array(b64) {
-  const clean = b64.trim().replace(/-/g, '+').replace(/_/g, '/');
+  // Strip anything that isn't a valid base64url character before converting
+  const clean = b64.replace(/[^A-Za-z0-9\-_]/g, '').replace(/-/g, '+').replace(/_/g, '/');
   const pad = '='.repeat((4 - clean.length % 4) % 4);
   const raw = atob(clean + pad);
   const arr = new Uint8Array(raw.length);
