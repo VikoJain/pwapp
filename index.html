@@ -260,6 +260,15 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         </div>
       </div>
 
+      <div class="card" id="activity-card">
+        <div class="section-hd" style="margin-bottom:8px">
+          <span class="card-title" style="margin-bottom:0">Activity</span>
+          <span id="activity-updated" style="font-size:11px;color:#8e8e93"></span>
+        </div>
+        <div id="activity-log" style="font-size:12px;color:#3c3c43;line-height:1.7"></div>
+        <button id="activity-more-btn" onclick="toggleActivityLog()" style="display:none;margin-top:8px;font-size:12px;color:#007aff;background:none;border:none;padding:0;cursor:pointer"></button>
+      </div>
+
       <div class="card">
         <div class="section-hd">
           <span class="card-title" style="margin-bottom:0">Today vs. 5-day average</span>
@@ -1537,6 +1546,53 @@ async function toggleServerArbitrage(enabled) {
 }
 
 let serverPollTimer = null;
+let activityLogFull = [];
+let activityLogExpanded = false;
+const ACTIVITY_PREVIEW = 5;
+
+function renderActivityLog(log) {
+  const el = document.getElementById('activity-log');
+  const btn = document.getElementById('activity-more-btn');
+  const updated = document.getElementById('activity-updated');
+  if (!el) return;
+  activityLogFull = Array.isArray(log) ? log : [];
+  if (activityLogFull.length === 0) {
+    el.innerHTML = '<span style="color:#8e8e93">No activity yet — starts when overnight mode runs.</span>';
+    btn.style.display = 'none';
+    return;
+  }
+  const entries = activityLogExpanded ? activityLogFull : activityLogFull.slice(0, ACTIVITY_PREVIEW);
+  el.innerHTML = entries.map(entry => {
+    const isPhase = /Phase [1-4]|cycle started|cycle complete|Arbitrage cycle/i.test(entry);
+    const isCar = /Car sync|car stopped|car detected/i.test(entry);
+    const isHoliday = /Holiday:/i.test(entry);
+    const isSafety = /Safety/i.test(entry);
+    let colour = '#3c3c43';
+    if (isPhase) colour = '#007aff';
+    if (isCar) colour = '#34c759';
+    if (isHoliday) colour = '#ff9500';
+    if (isSafety) colour = '#ff3b30';
+    return '<div style="padding:3px 0;border-bottom:1px solid #f2f2f7;color:' + colour + '">' + entry + '</div>';
+  }).join('');
+  if (activityLogFull.length > ACTIVITY_PREVIEW) {
+    btn.style.display = '';
+    btn.textContent = activityLogExpanded
+      ? 'Show less'
+      : 'Show ' + (activityLogFull.length - ACTIVITY_PREVIEW) + ' more';
+  } else {
+    btn.style.display = 'none';
+  }
+  if (updated) {
+    const now = new Date();
+    updated.textContent = 'Updated ' + now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  }
+}
+
+function toggleActivityLog() {
+  activityLogExpanded = !activityLogExpanded;
+  renderActivityLog(activityLogFull);
+}
+
 async function pollServerStatus() {
   try {
     const resp = await fetch('/.netlify/functions/arb-api?device_id=' + encodeURIComponent(getDeviceId()));
@@ -1559,6 +1615,7 @@ async function pollServerStatus() {
     renderArbUI();
     renderHolidayUI(data);
     renderCarSyncUI(data);
+    renderActivityLog(data.log);
   } catch(e) {}
 }
 
