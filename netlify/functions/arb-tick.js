@@ -297,17 +297,22 @@ async function runCarSync(state, store, tokenData, settings, deviceId) {
   if (vehicleCharging) {
     if (!state.carChargingSince) state.carChargingSince = Date.now();
     const minsCharging = (Date.now() - state.carChargingSince) / 60000;
-    if (minsCharging >= 2 && !state.carSyncActive) {
-      if (isExporting && priority === 'car') {
+    if (minsCharging >= 2) {
+      // Pause export whenever Phase 2 starts while car sync is already active (e.g. car was
+      // charging since Phase 1 start on Octopus Go) — not just on initial activation
+      if (isExporting && priority === 'car' && !state.carSyncPausedExport) {
         try { await setExport(access, apiBase, siteId, false); } catch(e) {}
+        try { await setMode(access, apiBase, siteId, 'autonomous', 100); } catch(e) {}
         state.carSyncPausedExport = true;
         log(state, 'Car sync: pausing export — charging battery with car');
       }
-      try {
-        await setMode(access, apiBase, siteId, 'autonomous', 100);
-        state.carSyncActive = true;
-        log(state, 'Car sync: active — battery charging with car (reserve 100%)');
-      } catch(e) { log(state, 'Car sync start error: ' + e.message); }
+      if (!state.carSyncActive) {
+        try {
+          await setMode(access, apiBase, siteId, 'autonomous', 100);
+          state.carSyncActive = true;
+          log(state, 'Car sync: active — battery charging with car (reserve 100%)');
+        } catch(e) { log(state, 'Car sync start error: ' + e.message); }
+      }
     }
   } else {
     state.carChargingSince = null;
