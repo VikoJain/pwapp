@@ -388,15 +388,23 @@ async function processUser(store, deviceId) {
   }
 
   const timedExport = JSON.parse(await store.get('timed_export_' + deviceId) || 'null');
-  if (timedExport && timedExport.endTime && Date.now() >= timedExport.endTime) {
-    try {
-      await setExport(tokenData.access, tokenData.apiBase, tokenData.energySiteId, false);
-      await store.delete('timed_export_' + deviceId);
-    } catch (e) {
-      // Only give up after 10 minutes of failed retries to avoid retrying forever
-      if (Date.now() - timedExport.endTime > 10 * 60 * 1000) {
+  if (timedExport && timedExport.endTime) {
+    if (Date.now() >= timedExport.endTime) {
+      try {
+        await setExport(tokenData.access, tokenData.apiBase, tokenData.energySiteId, false);
+        await sendPush(store, deviceId, 'Timed export finished', 'Export stopped — timer complete');
         await store.delete('timed_export_' + deviceId);
+      } catch (e) {
+        // Only give up after 10 minutes of failed retries to avoid retrying forever
+        if (Date.now() - timedExport.endTime > 10 * 60 * 1000) {
+          await store.delete('timed_export_' + deviceId);
+        }
       }
+    } else if (!timedExport.startNotified) {
+      const minsRemaining = Math.round((timedExport.endTime - Date.now()) / 60000);
+      await sendPush(store, deviceId, 'Timed export started', 'Exporting to grid · ~' + minsRemaining + ' min');
+      timedExport.startNotified = true;
+      await store.set('timed_export_' + deviceId, JSON.stringify(timedExport));
     }
   }
 
@@ -414,11 +422,18 @@ async function processUser(store, deviceId) {
   } catch (e) {}
 
   const pctExport = JSON.parse(await store.get('pct_export_' + deviceId) || 'null');
-  if (pctExport && pctExport.targetPct !== undefined && currentPct >= 0 && currentPct <= pctExport.targetPct + 4) {
-    try {
-      await setExport(tokenData.access, tokenData.apiBase, tokenData.energySiteId, false);
-      await store.delete('pct_export_' + deviceId);
-    } catch (e) {}
+  if (pctExport && pctExport.targetPct !== undefined) {
+    if (currentPct >= 0 && currentPct <= pctExport.targetPct + 4) {
+      try {
+        await setExport(tokenData.access, tokenData.apiBase, tokenData.energySiteId, false);
+        await sendPush(store, deviceId, 'Export target reached', 'Battery at ' + currentPct + '% — export stopped');
+        await store.delete('pct_export_' + deviceId);
+      } catch (e) {}
+    } else if (!pctExport.startNotified && currentPct >= 0) {
+      await sendPush(store, deviceId, 'Export to target started', 'Exporting to grid until battery reaches ' + pctExport.targetPct + '%');
+      pctExport.startNotified = true;
+      await store.set('pct_export_' + deviceId, JSON.stringify(pctExport));
+    }
   }
 
   if (pendingCmd && tokenData.vehicleId) {
