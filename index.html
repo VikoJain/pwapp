@@ -561,12 +561,16 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       </div>
       <div class="card">
         <div class="card-title">Notifications</div>
-        <div class="notif-row"><div><div class="notif-lbl">Export session complete</div><div class="notif-sub">When a timed export finishes</div></div><button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
-        <div class="notif-row"><div><div class="notif-lbl">Battery below 20%</div><div class="notif-sub">Low charge warning</div></div><button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
-        <div class="notif-row"><div><div class="notif-lbl">Battery fully charged</div></div><button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
-        <div class="notif-row"><div><div class="notif-lbl">High export rate alert</div><div class="notif-sub" id="thresh-sub">When rate exceeds 25p/kWh</div></div><button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
-        <div class="notif-row"><div><div class="notif-lbl">Arbitrage cycle complete</div><div class="notif-sub">Morning summary at 6am</div></div><button class="toggle on" onclick="this.classList.toggle('on')"></button></div>
-        <div class="notif-row"><div><div class="notif-lbl">Tomorrow's rates published</div><div class="notif-sub">Octopus publish ~4pm daily</div></div><button class="toggle" onclick="this.classList.toggle('on')"></button></div>
+        <div class="notif-row">
+          <div>
+            <div class="notif-lbl">Push notifications</div>
+            <div class="notif-sub" id="notif-sub">Tap to enable cycle and car sync alerts</div>
+          </div>
+          <button class="toggle" id="notif-toggle" onclick="toggleNotifications()"></button>
+        </div>
+        <div id="notif-what" style="display:none;margin-top:10px;font-size:12px;color:#8e8e93;line-height:1.6">
+          You'll be notified when overnight phases start and complete, car sync activates or stops, and holiday exports begin and end.
+        </div>
       </div>
       <div class="card">
         <div class="card-title">About</div>
@@ -698,6 +702,16 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       </div>
 
       <div class="card">
+        <div class="card-title">Health tab</div>
+        <div class="guide-intro">Shows the long-term condition of your Powerwall based on Tesla's diagnostics data.</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Capacity retained</strong> — your battery's current usable capacity as a percentage of its original 13.5 kWh. A new Powerwall typically shows 95–100%.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Cycle count</strong> — total full charge/discharge cycles completed. Tesla rates the Powerwall for around 3,000 cycles before significant degradation.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Est. remaining life</strong> — a rough guide based on current cycle count and degradation rate. Not a precise forecast.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Temperature</strong> — battery operating temperature. Above 35°C or below 0°C reduces performance. Normal indoor installations stay well within range year-round.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Capacity over time chart</strong> — shows how usable capacity has changed. Fills in as more health data is collected.</div></div>
+      </div>
+
+      <div class="card">
         <div class="card-title">Night tab — overnight arbitrage</div>
         <div class="guide-intro">Automates the full overnight charge-and-export cycle. It runs entirely on the server, so it works while your phone is off or away from home.</div>
         <div class="guide-section-lbl">How the cycle works</div>
@@ -733,9 +747,13 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         </div>
         <div class="guide-section-lbl">Key settings</div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Charge to %</strong> — how full to charge before exporting. <strong>80–90% is recommended.</strong> Higher means more energy to sell but a longer charge time.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Start time</strong> — set this to when your cheap overnight import rate begins. Common choices: 23:30 (Agile), 00:30 (Octopus Go), 02:00 (Cosy). Check your import tariff.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Start time</strong> — set this to when your cheap overnight import rate begins. Common choices: 23:30 (Agile or Octopus Go), 02:00 (Cosy). Check your import tariff.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>End time</strong> — when the cycle finishes and normal operation resumes. 05:30 works for most tariffs. Set it before your cheap rate window ends.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Car charging control</strong> — if your Tesla car charges overnight, enable this. Phase 2 pauses car charging so it doesn't reduce your export, then resumes it in Phase 3.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Car charging control</strong> — if your Tesla car charges overnight, enable this. Phase 2 stops the car charging to maximise your export, then resumes it in Phase 3. If you use Octopus car sync with Car first priority, Phase 2 export is paused instead so the battery charges alongside the car.</div></div>
+        <div class="guide-section-lbl">Octopus car sync</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Sync battery with car</strong> — detects whenever your car is charging (for example on an Octopus Go or Intelligent Octopus schedule) and charges the Powerwall at the same time, using the same cheap rate window.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Export first</strong> — if the car starts charging while the Powerwall is exporting, the export continues uninterrupted. The Powerwall syncs with the car only outside of active export phases.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Car first</strong> — if the car starts charging while the Powerwall is exporting, the export is paused and the Powerwall charges alongside the car. Export resumes automatically when the car finishes. If the car is charging during Phase 3, the recharge simply continues — no action needed.</div></div>
       </div>
 
       <div class="card">
@@ -754,6 +772,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Earnings shown are estimates.</strong> The app calculates revenue based on battery capacity and Agile rates. Your actual Octopus credit may differ slightly due to meter timing and standing charges.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Don't run manual exports during an overnight cycle.</strong> The automated cycle manages export mode itself — using the manual controls on the Home tab at the same time will interfere.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>The 5-day chart builds over time.</strong> It takes 5 days to become fully representative. During that period it shows however many days of history have been collected.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Enable push notifications.</strong> Go to Settings → Notifications and enable push notifications. You'll get an alert at each phase transition overnight so you can check the app is running correctly without staying awake.</div></div>
       </div>
 
       <div class="card">
@@ -1948,6 +1967,92 @@ function populateHolidaySettings(s) {
   if (stopEl) stopEl.value = fmt2(s.stopHour !== undefined ? s.stopHour : 23) + ':' + fmt2(s.stopMinute !== undefined ? s.stopMinute : 0);
 }
 
+// ── Push notifications ──────────────────────────────────────────────────────
+let vapidPublicKey = null;
+
+function urlBase64ToUint8Array(b64) {
+  const pad = '='.repeat((4 - b64.length % 4) % 4);
+  const base64 = (b64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function loadVapidKey() {
+  try {
+    const r = await fetch('/.netlify/functions/arb-api?type=vapid_public_key&device_id=' + getDeviceId());
+    const d = await r.json();
+    vapidPublicKey = d.publicKey || null;
+  } catch(e) {}
+}
+
+async function toggleNotifications() {
+  const toggle = document.getElementById('notif-toggle');
+  const sub = document.getElementById('notif-sub');
+  const what = document.getElementById('notif-what');
+  const isOn = toggle.classList.contains('on');
+
+  if (isOn) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const subscription = await reg.pushManager.getSubscription();
+      if (subscription) await subscription.unsubscribe();
+      await fetch('/.netlify/functions/arb-api', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete_push_subscription', device_id: getDeviceId() })
+      });
+    } catch(e) {}
+    toggle.classList.remove('on');
+    sub.textContent = 'Tap to enable cycle and car sync alerts';
+    what.style.display = 'none';
+    localStorage.removeItem('notif_enabled');
+    showToast('Notifications disabled');
+  } else {
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+      showToast('Push notifications not supported on this device'); return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      sub.textContent = 'Blocked — enable in your browser or phone settings';
+      showToast('Notification permission denied'); return;
+    }
+    try {
+      if (!vapidPublicKey) await loadVapidKey();
+      if (!vapidPublicKey) { showToast('Could not load notification key — try again'); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const pushSub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+      });
+      await fetch('/.netlify/functions/arb-api', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'save_push_subscription', subscription: pushSub.toJSON(), device_id: getDeviceId() })
+      });
+      toggle.classList.add('on');
+      sub.textContent = 'Active — you\'ll be notified of cycle events';
+      what.style.display = '';
+      localStorage.setItem('notif_enabled', '1');
+      showToast('Notifications enabled');
+    } catch(e) {
+      showToast('Could not enable notifications: ' + e.message);
+    }
+  }
+}
+
+function initNotifState() {
+  if (!('Notification' in window)) return;
+  const toggle = document.getElementById('notif-toggle');
+  const sub = document.getElementById('notif-sub');
+  const what = document.getElementById('notif-what');
+  if (!toggle) return;
+  if (Notification.permission === 'granted' && localStorage.getItem('notif_enabled')) {
+    toggle.classList.add('on');
+    sub.textContent = 'Active — you\'ll be notified of cycle events';
+    what.style.display = '';
+  } else if (Notification.permission === 'denied') {
+    sub.textContent = 'Blocked — enable in your browser or phone settings';
+  }
+}
+
 function toggleCarSync() {
   const toggle = document.getElementById('car-sync-toggle');
   const newState = !toggle.classList.contains('on');
@@ -2188,6 +2293,9 @@ async function init() {
 
   // Ensure a device ID exists on this device
   getDeviceId();
+
+  // Restore notification toggle state
+  initNotifState();
 
   // Check if we're returning from a Tesla OAuth login
   const authResult = sessionStorage.getItem('tesla_auth_result');
