@@ -490,25 +490,39 @@ async function processUser(store, deviceId) {
       if (m % 10 === 0) log(state, 'Phase 1 charging — battery at ' + pct + '%');
       if (pct >= chargeTargetPct) {
         log(state, 'Phase 1 complete — battery reached ' + pct + '%');
-        state.phase = 2;
-        const rate = await getOctopusRate(store, deviceId);
-        state.stats.phase2StartPct = pct;
-        state.stats.rateSum = rate;
-        state.stats.rateSamples = rate > 0 ? 1 : 0;
-        state.stats.rate = rate;
-        await setMode(access, apiBase, siteId, 'autonomous', 0);
-        await setExport(access, apiBase, siteId, true);
-        log(state, 'Phase 2: Export enabled' + (rate > 0 ? ' at ' + rate.toFixed(1) + 'p/kWh' : ' (rate unavailable — will retry)'));
-        await sendPush(store, deviceId, 'Battery charged — exporting now', 'Battery at ' + pct + '%, exporting to grid' + (rate > 0 ? ' at ' + rate.toFixed(1) + 'p/kWh' : ''));
-        const carSyncCarFirst = carSyncEnabled && carSyncSettings.priority === 'car';
-        if (s.carControlEnabled && tokenData.vehicleId && !carSyncCarFirst) {
-          try {
-            await wakeVehicle(access, apiBase, tokenData.vehicleId);
-            await store.set('pending_vehicle_cmd_' + deviceId, JSON.stringify({ cmd: 'charge_stop', chargeLimit: s.carChargeLimitPhase2 || 50, requestedAt: Date.now() }));
-            log(state, 'Vehicle: wake-up sent — charging will stop shortly');
-          } catch (e) { log(state, 'Vehicle wake error: ' + e.message); }
-        } else if (carSyncCarFirst) {
-          log(state, 'Phase 2: car sync priority set to car — skipping charge stop');
+        const endTotalMins = endHour * 60 + endMinute;
+        const nowTotalMins = h * 60 + m;
+        const minsRemaining = endTotalMins >= nowTotalMins ? endTotalMins - nowTotalMins : (24 * 60 - nowTotalMins + endTotalMins);
+        const exportMins = Math.ceil((pct / 100 * 13.5) / 5.0 * 60);
+        const rechargeMins = Math.ceil(13.5 / 3.5 * 60);
+        const minsNeeded = exportMins + rechargeMins;
+        if (minsRemaining < minsNeeded) {
+          log(state, 'Export skipped — only ' + minsRemaining + ' min until ' + fmt2(endHour) + ':' + fmt2(endMinute) + ', need ~' + minsNeeded + ' min — recharging instead');
+          state.phase = 3;
+          await setMode(access, apiBase, siteId, 'autonomous', 100);
+          log(state, 'Phase 3: Recharging from grid');
+          await sendPush(store, deviceId, 'Overnight export skipped', 'Not enough time before ' + fmt2(endHour) + ':' + fmt2(endMinute) + ' — recharging instead');
+        } else {
+          state.phase = 2;
+          const rate = await getOctopusRate(store, deviceId);
+          state.stats.phase2StartPct = pct;
+          state.stats.rateSum = rate;
+          state.stats.rateSamples = rate > 0 ? 1 : 0;
+          state.stats.rate = rate;
+          await setMode(access, apiBase, siteId, 'autonomous', 0);
+          await setExport(access, apiBase, siteId, true);
+          log(state, 'Phase 2: Export enabled' + (rate > 0 ? ' at ' + rate.toFixed(1) + 'p/kWh' : ' (rate unavailable — will retry)'));
+          await sendPush(store, deviceId, 'Battery charged — exporting now', 'Battery at ' + pct + '%, exporting to grid' + (rate > 0 ? ' at ' + rate.toFixed(1) + 'p/kWh' : ''));
+          const carSyncCarFirst = carSyncEnabled && carSyncSettings.priority === 'car';
+          if (s.carControlEnabled && tokenData.vehicleId && !carSyncCarFirst) {
+            try {
+              await wakeVehicle(access, apiBase, tokenData.vehicleId);
+              await store.set('pending_vehicle_cmd_' + deviceId, JSON.stringify({ cmd: 'charge_stop', chargeLimit: s.carChargeLimitPhase2 || 50, requestedAt: Date.now() }));
+              log(state, 'Vehicle: wake-up sent — charging will stop shortly');
+            } catch (e) { log(state, 'Vehicle wake error: ' + e.message); }
+          } else if (carSyncCarFirst) {
+            log(state, 'Phase 2: car sync priority set to car — skipping charge stop');
+          }
         }
       }
     }
@@ -545,12 +559,21 @@ async function processUser(store, deviceId) {
       }
     }
     else if (state.phase === 3) {
-      if (m % 10 === 0) log(state, 'Phase 3 recharging — battery at ' + pct + '%');
-      if (pct >= 98) {
-        log(state, 'Phase 3 complete — battery at ' + pct + '%');
-        state.phase = 4;
-        log(state, 'Phase 4: Fully charged — standby until ' + fmt2(endHour) + ':' + fmt2(endMinute));
-        await sendPush(store, deviceId, 'Battery fully recharged', 'At ' + pct + '% · Standby until ' + fmt2(endHour) + ':' + fmt2(endMinute));
+      const phase3PastEnd = h > endHour || (h === endHour && m >= endMinute);
+      if (phase3PastEnd) {
+        log(state, 'Phase 3 ended at ' + fmt2(endHour) + ':' + fmt2(endMinute) + ' — battery at ' + pct + '% — normal mode restored');
+        await sendPush(store, deviceId, 'Overnight cycle ended', 'End time reached · Battery at ' + pct + '% · Normal mode restored');
+        state.phase = 0;
+        await setExport(access, apiBase, siteId, false);
+        await setMode(access, apiBase, siteId, 'autonomous', 0);
+      } else {
+        if (m % 10 === 0) log(state, 'Phase 3 recharging — battery at ' + pct + '%');
+        if (pct >= 98) {
+          log(state, 'Phase 3 complete — battery at ' + pct + '%');
+          state.phase = 4;
+          log(state, 'Phase 4: Fully charged — standby until ' + fmt2(endHour) + ':' + fmt2(endMinute));
+          await sendPush(store, deviceId, 'Battery fully recharged', 'At ' + pct + '% · Standby until ' + fmt2(endHour) + ':' + fmt2(endMinute));
+        }
       }
     }
     else if (state.phase === 4 && h === endHour && m >= endMinute) {
