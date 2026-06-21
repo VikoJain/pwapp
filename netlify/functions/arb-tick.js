@@ -87,7 +87,7 @@ async function sendPush(store, deviceId, title, body) {
 }
 
 function log(state, msg) {
-  const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const time = new Date().toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', second: '2-digit' });
   state.log = state.log || [];
   state.log.unshift('[' + time + '] ' + msg);
   if (state.log.length > 50) state.log = state.log.slice(0, 50);
@@ -494,10 +494,9 @@ async function processUser(store, deviceId) {
         const nowTotalMins = h * 60 + m;
         const minsRemaining = endTotalMins >= nowTotalMins ? endTotalMins - nowTotalMins : (24 * 60 - nowTotalMins + endTotalMins);
         const exportMins = Math.ceil((pct / 100 * 13.5) / 5.0 * 60);
-        const rechargeMins = Math.ceil(13.5 / 3.5 * 60);
-        const minsNeeded = exportMins + rechargeMins;
-        if (minsRemaining < minsNeeded) {
-          log(state, 'Export skipped — only ' + minsRemaining + ' min until ' + fmt2(endHour) + ':' + fmt2(endMinute) + ', need ~' + minsNeeded + ' min — recharging instead');
+        const minExportWindow = 30;
+        if (minsRemaining < exportMins + minExportWindow) {
+          log(state, 'Export skipped — only ' + minsRemaining + ' min until ' + fmt2(endHour) + ':' + fmt2(endMinute) + ', need ~' + (exportMins + minExportWindow) + ' min — recharging instead');
           state.phase = 3;
           await setMode(access, apiBase, siteId, 'autonomous', 100);
           log(state, 'Phase 3: Recharging from grid');
