@@ -280,7 +280,7 @@ async function runHolidayMode(state, store, tokenData, currentPctRaw, h, m, devi
   }
 }
 
-async function runCarSync(state, store, tokenData, settings, deviceId) {
+async function runCarSync(state, store, tokenData, settings, deviceId, phase1Reserve = 50) {
   if (!tokenData.vehicleId) return;
   const { access, apiBase, energySiteId: siteId } = tokenData;
   const priority = settings.priority || 'export';
@@ -298,9 +298,10 @@ async function runCarSync(state, store, tokenData, settings, deviceId) {
     return;
   }
 
-  // Rate-limit vehicle checks: every 5 min when idle, every 1 min when actively syncing
+  // Rate-limit vehicle checks: 1 min when active or recently stopped (re-arm window), 5 min when idle
   const now = Date.now();
-  const checkInterval = state.carSyncActive ? 60000 : 5 * 60 * 1000;
+  const recentlyStopped = state.carSyncRecentStop && (now - state.carSyncRecentStop) < 10 * 60 * 1000;
+  const checkInterval = (state.carSyncActive || recentlyStopped) ? 60000 : 5 * 60 * 1000;
   if (state.carSyncLastCheck && (now - state.carSyncLastCheck) < checkInterval) return;
   state.carSyncLastCheck = now;
 
@@ -338,9 +339,10 @@ async function runCarSync(state, store, tokenData, settings, deviceId) {
   } else {
     state.carChargingSince = null;
     if (state.carSyncActive) {
+      state.carSyncRecentStop = Date.now();
       try {
-        // Phase 3 needs reserve at 100% to charge from grid — don't reset it
-        const reserveToRestore = state.phase === 3 ? 100 : 0;
+        // Restore reserve to match phase: Phase 3 needs 100%, Phase 1 needs chargeTargetPct, else 0%
+        const reserveToRestore = state.phase === 3 ? 100 : state.phase === 1 ? phase1Reserve : 0;
         await setMode(access, apiBase, siteId, 'autonomous', reserveToRestore);
         state.carSyncActive = false;
         if (state.carSyncPausedExport) {
@@ -408,28 +410,38 @@ async function processUser(store, deviceId) {
     }
   }
 
-  // Always fetch live battery % — records SOE history and provides pct for phase logic
-  let currentPct = -1;
-  try {
-    const live = await teslaGet(tokenData.access, tokenData.apiBase, `/api/1/energy_sites/${tokenData.energySiteId}/live_status`);
-    currentPct = Math.round(live.response?.percentage_charged ?? -1);
-    if (currentPct >= 0) {
-      const soeHistory = JSON.parse(await store.get('soe_history_' + deviceId) || '[]');
-      soeHistory.push({ t: Date.now(), pct: currentPct });
-      const cutoff = Date.now() - 6 * 24 * 3600 * 1000;
-      await store.set('soe_history_' + deviceId, JSON.stringify(soeHistory.filter(r => r.t > cutoff)));
-    }
-  } catch (e) {}
-
+  // Read pctExport before live_status so idle check can account for it
   const pctExport = JSON.parse(await store.get('pct_export_' + deviceId) || 'null');
-  if (pctExport && pctExport.targetPct !== undefined) {
+  const hasPctExport = pctExport && pctExport.targetPct !== undefined;
+
+  // Skip live_status when fully idle — saves Tesla API calls at scale
+  const fullyIdle = !state.enabled && state.phase === 0 && !state.holidayEnabled && !carSyncEnabled && !hasPctExport && !pendingCmd;
+  let currentPct = -1;
+  if (!fullyIdle) {
+    try {
+      const live = await teslaGet(tokenData.access, tokenData.apiBase, `/api/1/energy_sites/${tokenData.energySiteId}/live_status`);
+      currentPct = Math.round(live.response?.percentage_charged ?? -1);
+      if (currentPct >= 0) {
+        const soeHistory = JSON.parse(await store.get('soe_history_' + deviceId) || '[]');
+        const lastEntry = soeHistory[soeHistory.length - 1];
+        const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+        if (!lastEntry || lastEntry.t < fiveMinAgo) {
+          soeHistory.push({ t: Date.now(), pct: currentPct });
+          const cutoff = Date.now() - 6 * 24 * 3600 * 1000;
+          await store.set('soe_history_' + deviceId, JSON.stringify(soeHistory.filter(r => r.t > cutoff)));
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (hasPctExport) {
     if (currentPct >= 0 && currentPct <= pctExport.targetPct + 4) {
       try {
         await setExport(tokenData.access, tokenData.apiBase, tokenData.energySiteId, false);
         await sendPush(store, deviceId, 'Export target reached', 'Battery at ' + currentPct + '% — export stopped');
         await store.delete('pct_export_' + deviceId);
       } catch (e) {}
-    } else if (!pctExport.startNotified && currentPct >= 0) {
+    } else if (!pctExport.startNotified) {
       await sendPush(store, deviceId, 'Export to target started', 'Exporting to grid until battery reaches ' + pctExport.targetPct + '%');
       pctExport.startNotified = true;
       await store.set('pct_export_' + deviceId, JSON.stringify(pctExport));
@@ -450,10 +462,12 @@ async function processUser(store, deviceId) {
             await vehicleSetChargeLimit(access, apiBase, vehicleId, pendingCmd.chargeLimit || 50);
             await vehicleChargeStop(access, apiBase, vehicleId);
             log(state, 'Vehicle: charge limit set to ' + (pendingCmd.chargeLimit || 50) + '%, charging stopped for Phase 2 export');
+            await sendPush(store, deviceId, 'Car charging stopped', 'Charge limit set to ' + (pendingCmd.chargeLimit || 50) + '% — export running');
           } else if (pendingCmd.cmd === 'charge_resume') {
             await vehicleSetChargeLimit(access, apiBase, vehicleId, pendingCmd.chargeLimit);
             await vehicleChargeStart(access, apiBase, vehicleId);
             log(state, 'Vehicle: charging resumed at ' + pendingCmd.chargeLimit + '% limit');
+            await sendPush(store, deviceId, 'Car charging resumed', 'Charging to ' + pendingCmd.chargeLimit + '%');
           }
           await store.delete('pending_vehicle_cmd_' + deviceId);
         } else {
@@ -478,7 +492,13 @@ async function processUser(store, deviceId) {
   const pct = currentPct >= 0 ? currentPct : 0;
 
   try {
-    if (state.phase === 0 && state.enabled && h === startHour && m >= startMinute) {
+    if (!state.enabled && state.phase > 0) {
+      await setExport(access, apiBase, siteId, false);
+      await setMode(access, apiBase, siteId, 'autonomous', 0);
+      log(state, 'Arbitrage disabled mid-cycle — export stopped, normal mode restored');
+      state.phase = 0;
+    }
+    else if (state.phase === 0 && state.enabled && h === startHour && m >= startMinute) {
       state.phase = 1;
       state.stats = { kwh: 0, rate: 0, earned: 0, phase2StartPct: 0 };
       log(state, '=== Arbitrage cycle started ===');
@@ -575,12 +595,15 @@ async function processUser(store, deviceId) {
         }
       }
     }
-    else if (state.phase === 4 && h === endHour && m >= endMinute) {
+    else if (state.phase === 4 && (h > endHour || (h === endHour && m >= endMinute))) {
       state.phase = 0;
       await setExport(access, apiBase, siteId, false);
       await setMode(access, apiBase, siteId, 'autonomous', 0);
       log(state, '=== Cycle complete — autonomous mode restored, 0% reserve ===');
       await sendPush(store, deviceId, 'Overnight cycle complete', 'Normal operation restored · Check Night tab for earnings');
+    }
+    else if (state.phase === 4) {
+      if (m % 10 === 0) log(state, 'Phase 4: standby — battery at ' + pct + '%, waiting until ' + fmt2(endHour) + ':' + fmt2(endMinute));
     }
     else if (state.phase > 0 && h >= endHour + 1) {
       log(state, 'Safety fallback at ' + fmt2(h) + ':' + fmt2(m) + ' — restoring normal mode');
@@ -599,7 +622,7 @@ async function processUser(store, deviceId) {
   }
 
   if (carSyncEnabled) {
-    try { await runCarSync(state, store, tokenData, carSyncSettings, deviceId); }
+    try { await runCarSync(state, store, tokenData, carSyncSettings, deviceId, chargeTargetPct); }
     catch (e) { log(state, 'Car sync error: ' + e.message); }
   }
 
