@@ -58,7 +58,7 @@ exports.handler = async (event) => {
         state.log = state.log || [];
         const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
         state.log.unshift('[' + time + '] Arbitrage ' + (body.enabled ? 'enabled — server-side, starts at 23:30' : 'disabled by user'));
-        if (!body.enabled) state.phase = 0;
+        // Do not reset phase here — arb-tick handles clean shutdown if disabled mid-cycle
         await store.set(k('state'), JSON.stringify(state));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
