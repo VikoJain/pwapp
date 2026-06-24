@@ -106,8 +106,8 @@ exports.handler = async (event) => {
           state.dayNeedsCharge = false;
           state.dayChargeStartMins = null;
         } else {
-          state.dayExporting = false;
-          state.dayCharging = false;
+          // Leave dayCharging/dayExporting flags as-is so arb-tick can detect and clean up
+          // the Powerwall state on the next tick (sends API commands to restore normal mode)
         }
         await store.set(k('state'), JSON.stringify(state));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
