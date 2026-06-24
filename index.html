@@ -2534,14 +2534,19 @@ async function saveOctopusSettings() {
   btn.disabled = true; btn.textContent = 'Looking up…';
   result.textContent = ''; result.style.color = '#8e8e93';
   try {
-    const { tariffCode, productCode } = await lookupOctopusTariff(key, account);
+    const { tariffCode, productCode, importTariffCode, importProductCode } = await lookupOctopusTariff(key, account);
     localStorage.setItem('oct_key', key); state.octKey = key;
     localStorage.setItem('oct_account', account); state.octAccount = account;
     localStorage.setItem('oct_tariff', tariffCode); state.octTariff = tariffCode;
     localStorage.setItem('oct_product', productCode); state.octProduct = productCode;
-    document.getElementById('s-oct-tariff-txt').textContent = tariffCode;
+    if (importTariffCode) {
+      localStorage.setItem('oct_import_tariff', importTariffCode); state.octImportTariff = importTariffCode;
+      localStorage.setItem('oct_import_product', importProductCode); state.octImportProduct = importProductCode;
+    }
+    document.getElementById('s-oct-tariff-txt').textContent = tariffCode + (importTariffCode ? ' · ' + importTariffCode : ' · no import tariff found');
+    await syncOctopusToServer();
     result.style.color = '#1a7f37';
-    result.textContent = 'Tariff updated successfully';
+    result.textContent = importTariffCode ? 'Export and import tariffs detected' : 'Export tariff detected (no import tariff found)';
     toast('Octopus settings saved');
   } catch(e) {
     result.style.color = '#ff3b30';
