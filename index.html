@@ -818,10 +818,12 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 
       <div class="card">
         <div class="card-title">Day tab</div>
-        <div class="guide-intro">Profits from daytime Agile rate spreads. At 05:30 it fetches today's export rates and your Go import rate, then identifies slots where the spread (after 10% round-trip losses) exceeds your minimum margin. If the battery needs topping up before a profitable window, it charges from the grid automatically.</div>
+        <div class="guide-intro">Profits from daytime Agile rate spreads. At 05:30 it fetches today's export rates and your Go import rate, then identifies slots where the spread (after 10% round-trip losses) exceeds your minimum margin.</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Just-in-time charging</strong> — if the battery needs topping up before a profitable window, the app calculates exactly how long charging will take and starts as late as possible. This avoids the house consuming grid-charged energy for hours before the export window begins.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Strategy card always visible</strong> — you can see today's profitable slots and estimated net profit before deciding whether to enable Day mode. The card shows the charge window and each export slot with its p/kWh profit margin.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Import tariff auto-detected</strong> — reconnect your Octopus account to pick up both your export (Agile) and import (Go) tariffs. The profit calculation uses your actual live import rate with no manual entry needed.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Minimum profit margin</strong> — the default is 2p/kWh after losses. Raise it to only target the very best slots; lower it if rates are marginal but you still want to act.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Reserve floor</strong> — the app measures your actual standby consumption and keeps enough battery in reserve to power the house until the stop time. It will never export below this floor.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Away vs At home</strong> — when away, the app auto-calculates a reserve floor based on your standby consumption (fridge, router etc.) to keep the house powered until the stop time. When at home, set your own floor to guarantee enough battery for appliances like the washing machine.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Minimum profit margin</strong> — the default is 2p/kWh after losses. Raise it to only act on the strongest spread days; lower it if you want to catch more marginal slots.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div>Day mode and overnight arbitrage work together automatically. Day mode handles the day, overnight arbitrage handles the night.</div></div>
       </div>
 
@@ -2393,7 +2395,8 @@ function renderDayUI(data) {
     else if (exporting) { barEl.textContent = 'Exporting at ' + (currentRate > 0 ? currentRate.toFixed(1) + 'p' : '—p'); }
     else if (samples < 3) { barEl.textContent = 'Measuring standby consumption — check back in a few minutes…'; }
     else if (exportSlots.length === 0) { barEl.textContent = importRate ? 'No profitable export slots found today (import ' + importRate.toFixed(1) + 'p)' : 'Calculating strategy — check back shortly…'; }
-    else { barEl.textContent = exportSlots.length + ' profitable slot' + (exportSlots.length !== 1 ? 's' : '') + ' found' + (needsCharge ? ' — will charge to ' + chargeTargetPct + '% first' : ''); }
+    else if (needsCharge && chargeSlot) { barEl.textContent = exportSlots.length + ' profitable slot' + (exportSlots.length !== 1 ? 's' : '') + ' — charging ' + chargeSlot.startTime + ' → ' + chargeSlot.endTime + ' (just-in-time)'; }
+    else { barEl.textContent = exportSlots.length + ' profitable slot' + (exportSlots.length !== 1 ? 's' : '') + ' — existing battery sufficient'; }
   }
 
   const strategyCard = document.getElementById('day-strategy-card');
@@ -2429,7 +2432,7 @@ function renderDayUI(data) {
       const pillText = isCurrent ? 'charging' : isPast ? 'done' : 'upcoming';
       html += '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f2f2f7">'
         + '<span style="font-size:11px;font-weight:700;background:#dbeafe;color:#1d4ed8;padding:2px 7px;border-radius:6px;min-width:48px;text-align:center">CHARGE</span>'
-        + '<span style="font-size:13px;font-weight:600;flex:1">05:30 → ' + chargeSlot.endTime + ' · target ' + chargeSlot.targetPct + '%'
+        + '<span style="font-size:13px;font-weight:600;flex:1">' + (chargeSlot.startTime || '—') + ' → ' + chargeSlot.endTime + ' · target ' + chargeSlot.targetPct + '%'
         + (chargeSlot.estimatedCostGbp > 0 ? ' · est. £' + chargeSlot.estimatedCostGbp.toFixed(2) : '') + '</span>'
         + '<span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;' + pillStyle + '">' + pillText + '</span>'
         + '</div>';
@@ -2447,7 +2450,7 @@ function renderDayUI(data) {
         + '<span style="font-size:11px;font-weight:700;background:#d1fae5;color:#065f46;padding:2px 7px;border-radius:6px;min-width:48px;text-align:center">EXPORT</span>'
         + '<span style="font-size:13px;font-weight:600">' + s.time + '</span>'
         + '<span style="font-size:13px;color:#636366;flex:1;margin-left:6px">' + s.rate.toFixed(1) + 'p'
-        + (s.profit != null ? ' · <span style="color:#34c759">+' + s.profit.toFixed(1) + 'p profit</span>' : '') + '</span>'
+        + (s.profit != null ? ' · <span style="color:#34c759">+' + s.profit.toFixed(1) + 'p/kWh profit</span>' : '') + '</span>'
         + '<span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;' + pillStyle + '">' + pillText + '</span>'
         + '</div>';
     });
