@@ -199,12 +199,40 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       const profitable = exportRates
         .filter(r => (r.value * EFFICIENCY) - importRate >= minMargin)
         .sort((a, b) => new Date(a.validFrom) - new Date(b.validFrom));
-      dayExportSlots = profitable.map(s => {
+      // Battery capacity: how many consecutive 30-min slots can we sustain?
+      const SLOT_KWH = 5 * 0.5; // 2.5 kWh per slot at 5kW
+      const planFloorPct = ds.awayMode === false && ds.manualFloorPct !== undefined ? ds.manualFloorPct : 10;
+      const usableKwh = Math.max(0, (100 - planFloorPct) / 100 * 13.5);
+      const maxSlots = Math.max(1, Math.floor(usableKwh / SLOT_KWH));
+
+      // Group profitable slots into consecutive blocks (30-min gaps only)
+      const blocks = [];
+      let blk = [];
+      for (const s of profitable) {
+        if (!blk.length) { blk.push(s); continue; }
+        const gap = new Date(s.validFrom) - new Date(blk[blk.length - 1].validFrom);
+        if (gap <= 31 * 60 * 1000) { blk.push(s); } else { blocks.push(blk); blk = [s]; }
+      }
+      if (blk.length) blocks.push(blk);
+
+      // Find the best consecutive window (sliding window within each block)
+      let bestWindow = [], bestRevenue = 0;
+      for (const block of blocks) {
+        const w = Math.min(maxSlots, block.length);
+        for (let i = 0; i <= block.length - w; i++) {
+          const win = block.slice(i, i + w);
+          const rev = win.reduce((sum, s) => sum + s.value * EFFICIENCY * SLOT_KWH, 0);
+          if (rev > bestRevenue) { bestRevenue = rev; bestWindow = win; }
+        }
+      }
+
+      dayExportSlots = bestWindow.map(s => {
         const ls = new Date(new Date(s.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
         return { time: fmt2(ls.getHours()) + ':' + fmt2(ls.getMinutes()), rate: s.value, profit: parseFloat(((s.value * EFFICIENCY) - importRate).toFixed(1)) };
       });
-      // Only count FUTURE slots for charge planning (handles mid-day enabling)
-      const futureProfit = profitable.filter(s => {
+
+      // Future slots within the selected window for charge planning
+      const futureProfit = bestWindow.filter(s => {
         const ls = new Date(new Date(s.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
         return ls.getHours() * 60 + ls.getMinutes() > minuteOfDay;
       });
@@ -261,9 +289,11 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       state.dayEstimatedRevenue = dayEstimatedRevenue;
       state.dayEstimatedImportCost = dayEstimatedImportCost;
       state.dayEstimatedProfit = parseFloat((dayEstimatedRevenue - dayEstimatedImportCost).toFixed(2));
-      log(state, 'Day: strategy — ' + dayExportSlots.length + ' export slot(s)' +
-        (dayNeedsCharge ? ', charge to ' + dayChargeTargetPct + '% first' : '') +
-        (importRate ? ' (import ' + importRate.toFixed(1) + 'p, margin ≥' + minMargin + 'p)' : ' (no import tariff — using existing battery)'));
+      log(state, 'Day: strategy — best ' + dayExportSlots.length + '-slot window' +
+        (dayExportSlots.length > 0 ? ' ' + dayExportSlots[0].time + '–' + (() => { const last = dayExportSlots[dayExportSlots.length-1]; const [h2,m2] = last.time.split(':').map(Number); const end = h2*60+m2+30; return fmt2(Math.floor(end/60))+':'+fmt2(end%60); })() : '') +
+        ' (of ' + profitable.length + ' profitable slots, battery fits ' + maxSlots + ')' +
+        (dayNeedsCharge ? ', charging ' + (dayChargeSlot ? dayChargeSlot.startTime + '→' + dayChargeSlot.endTime : '') : '') +
+        (importRate ? ' · import ' + importRate.toFixed(1) + 'p' : ' · no import tariff'));
     }
   }
 
@@ -750,6 +780,18 @@ async function processUser(store, deviceId) {
     }
   } catch (e) {
     log(state, 'Error in phase ' + state.phase + ': ' + e.message);
+  }
+
+  // If Day mode was disabled while charging or exporting, restore normal mode
+  if (!state.dayEnabled && !state.holidayEnabled && state.phase === 0 && (state.dayCharging || state.dayExporting)) {
+    try {
+      await setExport(access, apiBase, siteId, false);
+      await setMode(access, apiBase, siteId, 'autonomous', 0);
+      log(state, 'Day: mode disabled — ' + (state.dayCharging ? 'charge' : 'export') + ' stopped, normal mode restored');
+      await sendPush(store, deviceId, 'Day mode disabled', 'Powerwall returned to normal mode');
+    } catch(e) {}
+    state.dayCharging = false;
+    state.dayExporting = false;
   }
 
   if ((state.dayEnabled || state.holidayEnabled) && state.phase === 0) {
