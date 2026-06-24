@@ -203,13 +203,18 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
         const ls = new Date(new Date(s.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
         return { time: fmt2(ls.getHours()) + ':' + fmt2(ls.getMinutes()), rate: s.value, profit: parseFloat(((s.value * EFFICIENCY) - importRate).toFixed(1)) };
       });
+      // Only count FUTURE slots for charge planning (handles mid-day enabling)
+      const futureProfit = profitable.filter(s => {
+        const ls = new Date(new Date(s.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
+        return ls.getHours() * 60 + ls.getMinutes() > minuteOfDay;
+      });
       const currentKwh = pctForPlan / 100 * 13.5;
-      const neededKwh = dayExportSlots.length * 5 * 0.5; // 5kW per slot × 0.5hr
+      const neededKwh = futureProfit.length * 5 * 0.5; // 5kW per slot × 0.5hr
       const chargeNeededKwh = Math.max(0, neededKwh - currentKwh);
-      dayNeedsCharge = chargeNeededKwh > 0.5 && profitable.length > 0;
+      dayNeedsCharge = chargeNeededKwh > 0.5 && futureProfit.length > 0;
       dayChargeTargetPct = Math.min(100, Math.round(pctForPlan + (chargeNeededKwh / 13.5 * 100)));
-      if (dayNeedsCharge && profitable.length > 0) {
-        const firstLS = new Date(new Date(profitable[0].validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
+      if (dayNeedsCharge && futureProfit.length > 0) {
+        const firstLS = new Date(new Date(futureProfit[0].validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
         dayChargeSlot = {
           endTime: fmt2(firstLS.getHours()) + ':' + fmt2(firstLS.getMinutes()),
           targetPct: dayChargeTargetPct,
@@ -297,9 +302,6 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
   state.dayReserveFloorPct = reserveFloorPct;
 
   const exportSlots = state.dayExportSlots || [];
-  const firstExportMins = exportSlots.length > 0
-    ? (() => { const [sh, sm] = exportSlots[0].time.split(':').map(Number); return sh * 60 + sm; })()
-    : 9999;
 
   // Determine if currently in a profitable export slot
   let inExportSlot = false;
@@ -309,9 +311,18 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     if (minuteOfDay >= slotMins && minuteOfDay < slotMins + 30) { inExportSlot = true; break; }
   }
 
-  // Force-charge logic: runs from 05:30 until first export slot or target reached
+  // Only consider FUTURE slots for charge timing — handles mid-day enabling correctly
+  const futureSlots = exportSlots.filter(s => {
+    const [sh, sm] = s.time.split(':').map(Number);
+    return sh * 60 + sm > minuteOfDay;
+  });
+  const firstFutureExportMins = futureSlots.length > 0
+    ? (() => { const [sh, sm] = futureSlots[0].time.split(':').map(Number); return sh * 60 + sm; })()
+    : 9999;
+
+  // Force-charge logic: runs until first FUTURE export slot or target reached
   const shouldCharge = !!(state.dayNeedsCharge &&
-    minuteOfDay < firstExportMins &&
+    minuteOfDay < firstFutureExportMins &&
     pctInt < (state.dayChargeTargetPct || 100) &&
     !inExportSlot);
 
