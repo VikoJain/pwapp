@@ -104,6 +104,7 @@ exports.handler = async (event) => {
           state.dayExportSlots = [];
           state.dayChargeSlot = null;
           state.dayNeedsCharge = false;
+          state.dayChargeStartMins = null;
         } else {
           state.dayExporting = false;
           state.dayCharging = false;
