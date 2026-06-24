@@ -191,9 +191,13 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 .phase-status.done{color:#8e8e93}
 .phase-status.waiting{color:#ff9500}
 .arb-earnings{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:4px}
+.arb-earnings-4{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
 .arb-earn-card{background:#f2f2f7;border-radius:11px;padding:10px 8px;text-align:center}
 .arb-earn-val{font-size:16px;font-weight:700;color:#34c759}
 .arb-earn-lbl{font-size:10px;color:#8e8e93;margin-top:2px}
+.seg-ctrl{display:flex;gap:0;border-radius:9px;overflow:hidden;border:1.5px solid #e5e5ea;margin-top:6px}
+.seg-btn{flex:1;padding:7px 4px;font-size:12px;font-weight:600;background:#f2f2f7;color:#636366;border:none;cursor:pointer;transition:background .15s,color .15s}
+.seg-btn.active{background:#007aff;color:#fff}
 </style>
 </head>
 <body>
@@ -363,6 +367,26 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           </div>
           <div id="best-slots"></div>
         </div>
+        <div class="card" id="import-tariff-card" style="display:none">
+          <div class="section-hd" style="margin-bottom:8px">
+            <div>
+              <div style="font-size:11px;font-weight:600;color:#8e8e93;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Import tariff (today)</div>
+              <div style="font-size:13px;font-weight:600" id="import-tariff-label">Octopus Go</div>
+            </div>
+            <div class="next-slot" id="import-rate-badge" style="display:none">
+              <span>Now</span>
+              <strong id="import-rate-now">—p</strong>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="importChart" role="img" aria-label="Import tariff rates by half-hour slot">Import rate data loading...</canvas>
+          </div>
+          <div style="display:flex;gap:12px;margin-top:8px;font-size:11px;color:#8e8e93">
+            <span><span style="display:inline-block;width:10px;height:10px;background:#636366;border-radius:2px;margin-right:3px"></span>Standard rate</span>
+            <span><span style="display:inline-block;width:10px;height:10px;background:#007aff;border-radius:2px;margin-right:3px"></span>Off-peak</span>
+          </div>
+        </div>
+
         <div class="card">
           <div class="earn-grid">
             <div class="earn-card"><div class="earn-val" id="earn-today">£—</div><div class="earn-lbl">Today's earnings</div></div>
@@ -505,11 +529,13 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 
       <div class="card">
         <div class="card-title">Last night's earnings</div>
-        <div class="arb-earnings">
+        <div class="arb-earnings-4">
           <div class="arb-earn-card"><div class="arb-earn-val" id="arb-kwh">—</div><div class="arb-earn-lbl">kWh exported</div></div>
           <div class="arb-earn-card"><div class="arb-earn-val" id="arb-rate">—p</div><div class="arb-earn-lbl">Avg rate</div></div>
-          <div class="arb-earn-card"><div class="arb-earn-val" id="arb-earned">£—</div><div class="arb-earn-lbl">Earned</div></div>
+          <div class="arb-earn-card"><div class="arb-earn-val" id="arb-earned">£—</div><div class="arb-earn-lbl">Revenue</div></div>
+          <div class="arb-earn-card"><div class="arb-earn-val" id="arb-profit" style="color:#34c759">£—</div><div class="arb-earn-lbl">Profit</div></div>
         </div>
+        <div style="font-size:10px;color:#aeaeb2;margin-top:6px">Import cost not yet tracked — profit shown as revenue</div>
       </div>
 
     </div>
@@ -578,7 +604,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <button class="toggle" id="notif-toggle" onclick="toggleNotifications()"></button>
         </div>
         <div id="notif-what" style="display:none;margin-top:10px;font-size:12px;color:#8e8e93;line-height:1.6">
-          You'll be notified when overnight phases start and complete, car sync activates or stops, and holiday exports begin and end.
+          You'll be notified when overnight phases start and complete, car sync activates or stops, and day mode exports or charges begin and end.
         </div>
       </div>
       <div class="card">
@@ -590,51 +616,76 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
     </div>
 
     <!-- HOLIDAY PAGE -->
-    <div class="page" id="page-holiday">
+    <div class="page" id="page-day">
       <div class="card">
         <div class="arb-toggle-row">
           <div>
-            <div class="arb-toggle-lbl">Holiday mode</div>
-            <div class="arb-toggle-sub" id="hol-toggle-sub">Sell at peak rates while you're away</div>
+            <div class="arb-toggle-lbl">Day mode</div>
+            <div class="arb-toggle-sub" id="day-toggle-sub">Profit from daytime rate spreads</div>
           </div>
-          <button class="big-toggle" id="hol-main-toggle" onclick="toggleHolidayMode()"></button>
+          <button class="big-toggle" id="day-main-toggle" onclick="toggleDayMode()"></button>
         </div>
       </div>
 
       <div class="card">
         <div class="card-title">Settings</div>
         <div class="settings-row">
-          <div><div class="settings-lbl">Stop exporting at</div><div class="settings-sub">Leaves time before overnight cycle</div></div>
-          <input class="settings-inp" type="time" id="hol-stop-time" value="23:00" />
+          <div><div class="settings-lbl">Stop at</div><div class="settings-sub">Leaves time before overnight cycle</div></div>
+          <input class="settings-inp" type="time" id="day-stop-time" value="23:00" />
         </div>
-        <div style="font-size:11px;color:#8e8e93;margin-top:6px;line-height:1.5">The app plans today's best export slots at the start of the day using your battery level and Agile rates — no threshold to set.</div>
-        <button class="btn-primary" style="margin-top:12px" onclick="saveHolidaySettings()">Save settings</button>
-        <div id="hol-settings-result" style="font-size:12px;margin-top:8px;min-height:16px"></div>
+        <div class="settings-row">
+          <div><div class="settings-lbl">Min profit margin</div><div class="settings-sub">p/kWh after round-trip losses</div></div>
+          <input class="settings-inp" type="number" id="day-min-margin" min="0" max="20" step="0.5" value="2" style="width:64px;text-align:right" />
+        </div>
+        <div class="settings-row" style="align-items:flex-start">
+          <div>
+            <div class="settings-lbl">Reserve floor</div>
+            <div class="settings-sub">How much battery to keep in reserve</div>
+          </div>
+        </div>
+        <div class="seg-ctrl">
+          <button class="seg-btn active" id="day-away-btn" onclick="setDayMode('away')">Away — auto calculate</button>
+          <button class="seg-btn" id="day-home-btn" onclick="setDayMode('home')">At home — set manually</button>
+        </div>
+        <div id="day-manual-floor-row" style="display:none;margin-top:10px">
+          <div class="settings-row" style="margin-top:0">
+            <div><div class="settings-lbl">Manual floor</div><div class="settings-sub">Battery % to keep for home use</div></div>
+            <input class="settings-inp" type="number" id="day-manual-floor" min="0" max="90" step="5" value="20" style="width:64px;text-align:right" />
+          </div>
+          <div style="font-size:11px;color:#8e8e93;margin-top:4px">The app will never export below this level — useful to keep enough for the washing machine, dishwasher, etc.</div>
+        </div>
+        <div id="day-away-note" style="font-size:11px;color:#8e8e93;margin-top:8px;line-height:1.5">When away, the app measures your standby consumption (fridge, router, etc.) and calculates the minimum battery needed to keep the house running until the stop time.</div>
+        <div style="font-size:11px;color:#8e8e93;margin-top:8px;line-height:1.5">At 05:30 the app compares today's Agile export rates against your import tariff. Slots where the spread exceeds the margin are targeted. If the battery needs topping up first, it charges from the grid automatically.</div>
+        <button class="btn-primary" style="margin-top:12px" onclick="saveDaySettings()">Save settings</button>
+        <div id="day-settings-result" style="font-size:12px;margin-top:8px;min-height:16px"></div>
       </div>
 
-      <div class="card" id="hol-strategy-card" style="display:none">
+      <div class="card" id="day-strategy-card">
         <div class="card-title">Today's strategy</div>
-        <div id="hol-strategy-summary" style="font-size:13px;color:#636366;margin-bottom:12px"></div>
-        <div id="hol-strategy-slots"></div>
+        <div id="day-strategy-summary" style="font-size:13px;color:#636366;margin-bottom:12px">Rates load at 05:30 — check back then to see today's opportunity.</div>
+        <div id="day-strategy-slots"></div>
+        <div id="day-strategy-profit" style="margin-top:12px;font-size:12px;color:#636366"></div>
+        <div id="day-strategy-cta" style="display:none;margin-top:10px;font-size:12px;color:#007aff;font-weight:600">Enable Day mode above to act on this strategy</div>
       </div>
 
       <div class="card">
         <div class="card-title">Live status</div>
         <div class="stat-grid">
-          <div class="stat"><div class="stat-val" id="hol-consumption">—</div><div class="stat-lbl">Consumption rate</div></div>
-          <div class="stat"><div class="stat-val" id="hol-reserve-floor">—%</div><div class="stat-lbl">Reserve floor</div></div>
-          <div class="stat"><div class="stat-val" id="hol-current-rate">—p</div><div class="stat-lbl">Current rate</div></div>
-          <div class="stat"><div class="stat-val" id="hol-export-status">—</div><div class="stat-lbl">Export</div></div>
+          <div class="stat"><div class="stat-val" id="day-consumption">—</div><div class="stat-lbl">Consumption rate</div></div>
+          <div class="stat"><div class="stat-val" id="day-reserve-floor">—%</div><div class="stat-lbl">Reserve floor</div></div>
+          <div class="stat"><div class="stat-val" id="day-import-rate">—p</div><div class="stat-lbl">Import rate</div></div>
+          <div class="stat"><div class="stat-val" id="day-mode-status">—</div><div class="stat-lbl">Mode</div></div>
         </div>
-        <div class="status-bar" id="hol-status-bar" style="margin-top:10px">Enable holiday mode to begin.</div>
+        <div class="status-bar" id="day-status-bar" style="margin-top:10px">Enable day mode to begin.</div>
       </div>
 
       <div class="card">
-        <div class="card-title">Holiday earnings</div>
-        <div class="arb-earnings">
-          <div class="arb-earn-card"><div class="arb-earn-val" id="hol-kwh">—</div><div class="arb-earn-lbl">kWh exported</div></div>
-          <div class="arb-earn-card"><div class="arb-earn-val" id="hol-avg-rate">—p</div><div class="arb-earn-lbl">Avg rate</div></div>
-          <div class="arb-earn-card"><div class="arb-earn-val" id="hol-earned">£—</div><div class="arb-earn-lbl">Est. earned</div></div>
+        <div class="card-title">Today's earnings</div>
+        <div class="arb-earnings-4">
+          <div class="arb-earn-card"><div class="arb-earn-val" id="day-kwh">—</div><div class="arb-earn-lbl">kWh exported</div></div>
+          <div class="arb-earn-card"><div class="arb-earn-val" id="day-earned">£—</div><div class="arb-earn-lbl">Revenue</div></div>
+          <div class="arb-earn-card"><div class="arb-earn-val" id="day-import-cost">£—</div><div class="arb-earn-lbl">Cost</div></div>
+          <div class="arb-earn-card"><div class="arb-earn-val" id="day-net-profit" style="color:#34c759">£—</div><div class="arb-earn-lbl">Profit</div></div>
         </div>
       </div>
     </div>
@@ -688,7 +739,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
             <div class="step-desc">On the same page, your account number is in the format <span class="guide-code">A-12345678</span>. It appears near the top of the API access section.</div>
           </div>
         </div>
-        <div style="font-size:12px;color:#8e8e93;margin-top:8px;line-height:1.5">The app requires an active <strong>Agile Outgoing</strong> export tariff. If none is detected, contact Octopus Energy to add one to your account.</div>
+        <div style="font-size:12px;color:#8e8e93;margin-top:8px;line-height:1.5">The app requires an active <strong>Agile Outgoing</strong> export tariff. Your import tariff (e.g. Octopus Go) is auto-detected from the same account and used for Day mode profit calculations.</div>
       </div>
 
       <div class="card">
@@ -766,12 +817,12 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       </div>
 
       <div class="card">
-        <div class="card-title">Holiday tab</div>
-        <div class="guide-intro">Exports during the day while you're away. It runs from 05:30 until your chosen stop time, operating alongside the overnight cycle.</div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>No rate threshold to set</strong> — the app automatically identifies the best third of today's remaining Agile slots and only exports during those.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Reserve floor</strong> — the app measures your actual standby consumption (fridge, router, etc.) and calculates the minimum battery % needed to power the house until the overnight cycle begins at 23:30. It will never export below this floor.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Enable when you leave, disable when you return.</strong> When you are home your consumption is much higher — the app will take a few hours to recalibrate.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div>Holiday mode and overnight arbitrage work together automatically. Holiday mode handles the day, overnight arbitrage handles the night.</div></div>
+        <div class="card-title">Day tab</div>
+        <div class="guide-intro">Profits from daytime Agile rate spreads. At 05:30 it fetches today's export rates and your Go import rate, then identifies slots where the spread (after 10% round-trip losses) exceeds your minimum margin. If the battery needs topping up before a profitable window, it charges from the grid automatically.</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Import tariff auto-detected</strong> — reconnect your Octopus account to pick up both your export (Agile) and import (Go) tariffs. The profit calculation uses your actual live import rate with no manual entry needed.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Minimum profit margin</strong> — the default is 2p/kWh after losses. Raise it to only target the very best slots; lower it if rates are marginal but you still want to act.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Reserve floor</strong> — the app measures your actual standby consumption and keeps enough battery in reserve to power the house until the stop time. It will never export below this floor.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div>Day mode and overnight arbitrage work together automatically. Day mode handles the day, overnight arbitrage handles the night.</div></div>
       </div>
 
       <div class="card">
@@ -818,9 +869,9 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
       Night
     </button>
-    <button class="nav-item" id="tab-holiday" onclick="switchTab('holiday')">
+    <button class="nav-item" id="tab-day" onclick="switchTab('day')">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-      Holiday
+      Day
     </button>
     <button class="nav-item" id="tab-health" onclick="switchTab('health')">
       <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
@@ -878,11 +929,13 @@ let state = {
   octAccount: localStorage.getItem('oct_account') || '',
   octTariff: localStorage.getItem('oct_tariff') || '',
   octProduct: localStorage.getItem('oct_product') || '',
+  octImportTariff: localStorage.getItem('oct_import_tariff') || '',
+  octImportProduct: localStorage.getItem('oct_import_product') || '',
   energySiteId: localStorage.getItem('energy_site_id') || null,
   todayRates: [], tomorrowRates: [], currentDay: 'today',
   exportTimer: null, exportEndTime: null, activeExportBtn: null,
   pctMonitorInterval: null,
-  rateChart: null, healthChart: null,
+  rateChart: null, healthChart: null, importChart: null,
   // Arbitrage state
   arbEnabled: localStorage.getItem('arb_enabled') === 'true',
   arbPhase: parseInt(localStorage.getItem('arb_phase') || '0'),
@@ -908,11 +961,11 @@ function acceptTerms() {
 
 // ── UI helpers ────────────────────────────────────────────
 function switchTab(name) {
-  ['setup','home','tariff','arb','holiday','health','settings','guide'].forEach(t => {
+  ['setup','home','tariff','arb','day','health','settings','guide'].forEach(t => {
     const page = document.getElementById('page-'+t);
     if (page) page.classList.toggle('active', t===name);
   });
-  ['setup','home','tariff','arb','holiday','health','settings','guide'].forEach(t => {
+  ['setup','home','tariff','arb','day','health','settings','guide'].forEach(t => {
     const tab = document.getElementById('tab-'+t);
     if (tab) tab.classList.toggle('active', t===name);
   });
@@ -921,7 +974,7 @@ function switchTab(name) {
   if (name==='settings') populateSettings();
   if (name==='home' && state.teslaToken && state.energySiteId) { startAutoRefresh(); fetchServerSoeHistory(); }
   if (name==='arb') { renderArbUI(); startServerPoll(); }
-  if (name==='holiday') { renderHolidayUI(); startServerPoll(); }
+  if (name==='day') { renderDayUI(); startServerPoll(); }
 }
 function showSettings() { switchTab('settings'); }
 function toast(msg, dur=2800) {
@@ -1367,20 +1420,27 @@ async function lookupOctopusTariff(apiKey, accountNumber) {
   if (!resp.ok) throw new Error('Invalid API key or account number (HTTP ' + resp.status + ')');
   const data = await resp.json();
   const now = new Date().toISOString();
+  const deriveProduct = code => code.replace(/^[A-Z]-\dR-/, '').replace(/-[A-Z]$/, '');
+  let exportTariff = null, importTariff = null;
   for (const property of data.properties || []) {
     for (const mp of property.electricity_meter_points || []) {
       for (const agreement of mp.agreements || []) {
-        if (agreement.tariff_code && agreement.tariff_code.includes('AGILE-OUTGOING') &&
-            (!agreement.valid_to || agreement.valid_to > now)) {
-          const tariffCode = agreement.tariff_code;
-          // Derive product code from tariff code: E-1R-AGILE-OUTGOING-19-05-13-C → AGILE-OUTGOING-19-05-13
-          const productCode = tariffCode.replace(/^[A-Z]-\dR-/, '').replace(/-[A-Z]$/, '');
-          return { tariffCode, productCode };
+        if (!agreement.tariff_code || (agreement.valid_to && agreement.valid_to < now)) continue;
+        if (agreement.tariff_code.includes('OUTGOING')) {
+          if (!exportTariff) exportTariff = agreement.tariff_code;
+        } else {
+          if (!importTariff) importTariff = agreement.tariff_code;
         }
       }
     }
   }
-  throw new Error('No active Agile Outgoing tariff found on this account');
+  if (!exportTariff) throw new Error('No active Agile Outgoing tariff found on this account');
+  return {
+    tariffCode: exportTariff,
+    productCode: deriveProduct(exportTariff),
+    importTariffCode: importTariff,
+    importProductCode: importTariff ? deriveProduct(importTariff) : null
+  };
 }
 
 async function connectOctopus() {
@@ -1392,13 +1452,17 @@ async function connectOctopus() {
   btn.disabled = true; btn.textContent = 'Looking up tariff…';
   result.textContent = ''; result.style.color = '#8e8e93';
   try {
-    const { tariffCode, productCode } = await lookupOctopusTariff(key, account);
+    const { tariffCode, productCode, importTariffCode, importProductCode } = await lookupOctopusTariff(key, account);
     localStorage.setItem('oct_key', key); state.octKey = key;
     localStorage.setItem('oct_account', account); state.octAccount = account;
     localStorage.setItem('oct_tariff', tariffCode); state.octTariff = tariffCode;
     localStorage.setItem('oct_product', productCode); state.octProduct = productCode;
+    if (importTariffCode) {
+      localStorage.setItem('oct_import_tariff', importTariffCode); state.octImportTariff = importTariffCode;
+      localStorage.setItem('oct_import_product', importProductCode); state.octImportProduct = importProductCode;
+    }
     result.style.color = '#1a7f37';
-    result.textContent = 'Connected — found tariff: ' + tariffCode;
+    result.textContent = 'Connected — export: ' + tariffCode + (importTariffCode ? ' · import: ' + importTariffCode : ' · no import tariff found');
     toast('Octopus connected!');
   } catch(e) {
     result.style.color = '#ff3b30';
@@ -1500,6 +1564,85 @@ function calcEarnings() {
 function initTariffPage() {
   if (!state.octKey) { document.getElementById('tariff-no-key').style.display='block'; document.getElementById('tariff-content').style.display='none'; return; }
   if (state.todayRates.every(r=>r===null)) loadRates();
+  if (state.octImportTariff && state.octImportProduct) loadImportRates();
+}
+
+async function loadImportRates() {
+  if (!state.octKey || !state.octImportTariff || !state.octImportProduct) return;
+  const now = new Date();
+  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+  const todayEnd = new Date(now); todayEnd.setHours(23, 59, 59, 0);
+  const fmt = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+  try {
+    const resp = await fetch(
+      `${OCTOPUS_API}/products/${state.octImportProduct}/electricity-tariffs/${state.octImportTariff}/standard-unit-rates/?period_from=${fmt(todayStart)}&period_to=${fmt(todayEnd)}&page_size=50`,
+      { headers: { 'Authorization': 'Basic ' + btoa(state.octKey + ':') } }
+    );
+    const data = await resp.json();
+    const results = data.results || [];
+    if (!results.length) return;
+    // Fill 48 half-hourly slots. Go returns 1-2 records; expand to full day.
+    const slots = new Array(48).fill(null);
+    results.forEach(r => {
+      const from = new Date(r.valid_from);
+      const to = r.valid_to ? new Date(r.valid_to) : todayEnd;
+      const rate = parseFloat(parseFloat(r.value_inc_vat).toFixed(2));
+      for (let i = 0; i < 48; i++) {
+        const slotTime = new Date(todayStart.getTime() + i * 30 * 60 * 1000);
+        if (slotTime >= from && slotTime < to) slots[i] = rate;
+      }
+    });
+    // If still sparse (e.g. Go only returns daytime rate for today's window), fill gaps
+    // by finding the dominant rate and assuming off-peak slots are the minority low ones
+    const filled = slots.filter(r => r !== null);
+    if (filled.length > 0 && slots.some(r => r === null)) {
+      const maxRate = Math.max(...filled);
+      const minRate = Math.min(...filled);
+      // Off-peak is 23:30-05:30 (UTC times may shift — use index approach)
+      for (let i = 0; i < 48; i++) {
+        if (slots[i] === null) slots[i] = (i < 11 || i >= 47) ? minRate : maxRate;
+      }
+    }
+    renderImportChart(slots);
+  } catch(e) { console.warn('Import rates error:', e.message); }
+}
+
+function renderImportChart(slots) {
+  if (!slots || slots.every(r => r === null)) return;
+  const card = document.getElementById('import-tariff-card');
+  if (card) card.style.display = '';
+  const rates = slots.map(r => r === null ? 0 : r);
+  const maxRate = Math.max(...rates.filter(r => r > 0));
+  const minRate = Math.min(...rates.filter(r => r > 0));
+  // Colour: off-peak slots (below midpoint) in blue, standard in grey
+  const mid = (maxRate + minRate) / 2;
+  const colors = rates.map(r => r > 0 && r <= mid ? '#007aff' : '#636366');
+  // Show current import rate badge
+  const now = new Date();
+  const idx = now.getHours() * 2 + (now.getMinutes() >= 30 ? 1 : 0);
+  const currentImportRate = rates[idx];
+  const badge = document.getElementById('import-rate-badge');
+  const rateNow = document.getElementById('import-rate-now');
+  if (badge && currentImportRate > 0) { badge.style.display = ''; rateNow.textContent = currentImportRate.toFixed(1) + 'p'; }
+  // Update label with rate summary
+  const label = document.getElementById('import-tariff-label');
+  if (label && maxRate > 0) {
+    const parts = [];
+    if (maxRate !== minRate) parts.push(maxRate.toFixed(1) + 'p standard / ' + minRate.toFixed(1) + 'p off-peak');
+    else parts.push(maxRate.toFixed(1) + 'p flat rate');
+    label.textContent = parts[0];
+  }
+  if (state.importChart) state.importChart.destroy();
+  const ctx = document.getElementById('importChart').getContext('2d');
+  const labels = Array.from({length: 48}, (_, i) => { const h = Math.floor(i / 2); return i % 2 === 0 ? String(h).padStart(2, '0') + ':00' : ''; });
+  state.importChart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ data: rates, backgroundColor: colors, borderWidth: 0, barPercentage: 0.95, categoryPercentage: 1.0 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: {
+      title: items => { const i = items[0].dataIndex, h = Math.floor(i/2), m = i%2===0?'00':'30', h2=i%2===0?h:h+1, m2=i%2===0?'30':'00'; return String(h).padStart(2,'0')+':'+m+' – '+String(h2).padStart(2,'0')+':'+m2; },
+      label: item => rates[item.dataIndex] > 0 ? ' ' + rates[item.dataIndex].toFixed(1) + 'p/kWh' : ' No data'
+    }}}, scales: { x: { ticks: { font: { size: 9 }, color: '#8e8e93', maxRotation: 90, minRotation: 90, autoSkip: false }, grid: { display: false }, border: { display: false } }, y: { ticks: { font: { size: 10 }, color: '#8e8e93', callback: v => v + 'p' }, grid: { color: '#f2f2f7' }, border: { display: false } } } }
+  });
 }
 
 // ── Server-side arbitrage ─────────────────────────────────
@@ -1528,6 +1671,8 @@ async function syncOctopusToServer() {
         octTariff: state.octTariff,
         octProduct: state.octProduct,
         octAccount: state.octAccount,
+        octImportTariff: state.octImportTariff || null,
+        octImportProduct: state.octImportProduct || null,
         device_id: getDeviceId()
       })
     });
@@ -1565,7 +1710,7 @@ function renderActivityLog(log) {
   el.innerHTML = entries.map(entry => {
     const isPhase = /Phase [1-4]|cycle started|cycle complete|Arbitrage cycle/i.test(entry);
     const isCar = /Car sync|car stopped|car detected/i.test(entry);
-    const isHoliday = /Holiday:/i.test(entry);
+    const isHoliday = /Holiday:|Day:/i.test(entry);
     const isSafety = /Safety/i.test(entry);
     let colour = '#3c3c43';
     if (isPhase) colour = '#007aff';
@@ -1611,9 +1756,9 @@ async function pollServerStatus() {
     if (data.stats) state.arbStats = data.stats;
     // Sync strategy settings to the UI
     if (data.arbSettings) populateArbSettings(data.arbSettings);
-    if (data.holidaySettings) populateHolidaySettings(data.holidaySettings);
+    if (data.daySettings) populateDaySettings(data.daySettings);
     renderArbUI();
-    renderHolidayUI(data);
+    renderDayUI(data);
     renderCarSyncUI(data);
     renderActivityLog(data.log);
   } catch(e) {}
@@ -1708,6 +1853,9 @@ function renderArbUI() {
   document.getElementById('arb-kwh').textContent = stats.kwh > 0 ? stats.kwh.toFixed(1) : '—';
   document.getElementById('arb-rate').textContent = stats.rate > 0 ? stats.rate.toFixed(1)+'p' : '—p';
   document.getElementById('arb-earned').textContent = stats.earned > 0 ? '£'+stats.earned.toFixed(2) : '£—';
+  // Profit = revenue (import cost not yet tracked on Night tab)
+  const profitEl = document.getElementById('arb-profit');
+  if (profitEl) profitEl.textContent = stats.earned > 0 ? '£'+stats.earned.toFixed(2) : '£—';
 }
 
 function fmt2(n) { return String(n).padStart(2, '0'); }
@@ -1986,42 +2134,62 @@ async function startArbPhase5() {
   } catch(e) { arbLog('Phase 5 error: '+e.message); }
 }
 
-// ── Holiday mode ──────────────────────────────────────────
-async function toggleHolidayMode() {
-  const btn = document.getElementById('hol-main-toggle');
+// ── Day mode ──────────────────────────────────────────────
+async function toggleDayMode() {
+  const btn = document.getElementById('day-main-toggle');
   const nowOn = !btn.classList.contains('on');
   btn.classList.toggle('on', nowOn);
   try {
     await fetch('/.netlify/functions/arb-api', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'toggle_holiday', enabled: nowOn, device_id: getDeviceId() })
+      body: JSON.stringify({ action: 'toggle_day', enabled: nowOn, device_id: getDeviceId() })
     });
-    toast(nowOn ? 'Holiday mode enabled' : 'Holiday mode disabled');
+    toast(nowOn ? 'Day mode enabled' : 'Day mode disabled');
     await pollServerStatus();
   } catch(e) { toast('Error: ' + e.message); }
 }
 
-async function saveHolidaySettings() {
-  const stopTime = document.getElementById('hol-stop-time').value;
+function setDayMode(mode) {
+  const awayBtn = document.getElementById('day-away-btn');
+  const homeBtn = document.getElementById('day-home-btn');
+  const floorRow = document.getElementById('day-manual-floor-row');
+  const awayNote = document.getElementById('day-away-note');
+  const isAway = mode === 'away';
+  if (awayBtn) awayBtn.classList.toggle('active', isAway);
+  if (homeBtn) homeBtn.classList.toggle('active', !isAway);
+  if (floorRow) floorRow.style.display = isAway ? 'none' : '';
+  if (awayNote) awayNote.style.display = isAway ? '' : 'none';
+}
+
+async function saveDaySettings() {
+  const stopTime = document.getElementById('day-stop-time').value;
   const [stopHour, stopMinute] = stopTime.split(':').map(Number);
-  const btn = document.querySelector('[onclick="saveHolidaySettings()"]');
-  const result = document.getElementById('hol-settings-result');
+  const minMargin = parseFloat(document.getElementById('day-min-margin').value) || 2.0;
+  const awayMode = document.getElementById('day-away-btn').classList.contains('active');
+  const manualFloorPct = parseInt(document.getElementById('day-manual-floor').value) || 20;
+  const btn = document.querySelector('[onclick="saveDaySettings()"]');
+  const result = document.getElementById('day-settings-result');
   btn.disabled = true; result.textContent = 'Saving…'; result.style.color = '#8e8e93';
   try {
     await fetch('/.netlify/functions/arb-api', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save_holiday_settings', stopHour, stopMinute, device_id: getDeviceId() })
+      body: JSON.stringify({ action: 'save_day_settings', stopHour, stopMinute, minMargin, awayMode, manualFloorPct, device_id: getDeviceId() })
     });
     result.textContent = 'Settings saved.'; result.style.color = '#1a7f37';
-    toast('Holiday settings saved');
+    toast('Day settings saved');
   } catch(e) { result.textContent = 'Error: ' + e.message; result.style.color = '#ff3b30'; }
   btn.disabled = false;
 }
 
-function populateHolidaySettings(s) {
+function populateDaySettings(s) {
   if (!s) return;
-  const stopEl = document.getElementById('hol-stop-time');
+  const stopEl = document.getElementById('day-stop-time');
   if (stopEl) stopEl.value = fmt2(s.stopHour !== undefined ? s.stopHour : 23) + ':' + fmt2(s.stopMinute !== undefined ? s.stopMinute : 0);
+  const marginEl = document.getElementById('day-min-margin');
+  if (marginEl && s.minMargin !== undefined) marginEl.value = s.minMargin;
+  const floorEl = document.getElementById('day-manual-floor');
+  if (floorEl && s.manualFloorPct !== undefined) floorEl.value = s.manualFloorPct;
+  setDayMode(s.awayMode === false ? 'home' : 'away');
 }
 
 // ── Push notifications ──────────────────────────────────────────────────────
@@ -2176,92 +2344,139 @@ function renderCarSyncUI(data) {
   }
 }
 
-function renderHolidayUI(data) {
+function renderDayUI(data) {
   data = data || {};
-  const enabled = !!data.holidayEnabled;
-  const exporting = !!data.holidayExporting;
-  const consumption = data.holidayConsumptionKwhPerHr;
-  const reserveFloor = data.holidayReserveFloorPct;
-  const currentRate = data.holidayCurrentRate;
-  const samples = (data.holidayConsumptionSamples || []).length;
-  const stats = data.holidayStats || {};
+  const enabled = !!(data.dayEnabled || data.holidayEnabled);
+  const exporting = !!data.dayExporting;
+  const charging = !!data.dayCharging;
+  const consumption = data.dayConsumptionKwhPerHr;
+  const reserveFloor = data.dayReserveFloorPct;
+  const importRate = data.dayImportRate;
+  const currentRate = data.dayCurrentRate;
+  const samples = (data.dayConsumptionSamples || []).length;
+  const stats = data.dayStats || {};
 
-  const toggle = document.getElementById('hol-main-toggle');
+  const toggle = document.getElementById('day-main-toggle');
   if (toggle) toggle.classList.toggle('on', enabled);
 
-  const sub = document.getElementById('hol-toggle-sub');
+  const sub = document.getElementById('day-toggle-sub');
   if (sub) sub.textContent = enabled
-    ? (exporting ? 'Exporting to grid now' : 'Active — monitoring rates')
-    : 'Sell at peak rates while you\'re away';
+    ? (charging ? 'Charging battery for export' : exporting ? 'Exporting to grid now' : 'Active — monitoring slots')
+    : 'Profit from daytime rate spreads';
 
-  const consEl = document.getElementById('hol-consumption');
+  const consEl = document.getElementById('day-consumption');
   if (consEl) consEl.textContent = consumption > 0
     ? consumption.toFixed(2) + ' kW' + (samples < 3 ? '*' : '')
     : '—';
 
-  const floorEl = document.getElementById('hol-reserve-floor');
+  const floorEl = document.getElementById('day-reserve-floor');
   if (floorEl) floorEl.textContent = reserveFloor != null ? reserveFloor + '%' : '—%';
 
-  const rateEl = document.getElementById('hol-current-rate');
-  if (rateEl) rateEl.textContent = currentRate > 0 ? currentRate.toFixed(1) + 'p' : '—p';
+  const importRateEl = document.getElementById('day-import-rate');
+  if (importRateEl) importRateEl.textContent = importRate > 0 ? importRate.toFixed(1) + 'p' : '—p';
 
-  const expEl = document.getElementById('hol-export-status');
-  if (expEl) {
-    expEl.textContent = enabled ? (exporting ? 'On' : 'Off') : '—';
-    expEl.className = 'stat-val ' + (exporting ? 'green' : '');
+  const modeEl = document.getElementById('day-mode-status');
+  if (modeEl) {
+    modeEl.textContent = !enabled ? '—' : charging ? 'Charging' : exporting ? 'Exporting' : 'Waiting';
+    modeEl.className = 'stat-val ' + (exporting ? 'green' : charging ? 'amber' : '');
   }
 
-  const threshold = data.holidayRateThreshold;
-  const slotsAvailable = data.holidaySlotsAvailable || 0;
-  const targetSlots = data.holidayTargetSlots || [];
+  const exportSlots = data.dayExportSlots || [];
+  const chargeSlot = data.dayChargeSlot;
+  const needsCharge = !!data.dayNeedsCharge;
+  const chargeTargetPct = data.dayChargeTargetPct;
 
-  const barEl = document.getElementById('hol-status-bar');
+  const barEl = document.getElementById('day-status-bar');
   if (barEl) {
-    if (!enabled) { barEl.textContent = 'Enable holiday mode to begin.'; }
-    else if (exporting) { barEl.textContent = 'Exporting at ' + (currentRate > 0 ? currentRate.toFixed(1) + 'p' : '—p') + ' — target slot (threshold ' + (threshold > 0 ? threshold.toFixed(1) + 'p' : '—') + ')'; }
+    if (!enabled) { barEl.textContent = 'Enable day mode to begin.'; }
+    else if (charging) { barEl.textContent = 'Charging from grid — target ' + (chargeTargetPct || '—') + '% before export window'; }
+    else if (exporting) { barEl.textContent = 'Exporting at ' + (currentRate > 0 ? currentRate.toFixed(1) + 'p' : '—p'); }
     else if (samples < 3) { barEl.textContent = 'Measuring standby consumption — check back in a few minutes…'; }
-    else if (reserveFloor != null && data.holidayExporting === false && currentRate > 0 && threshold > 0) {
-      barEl.textContent = currentRate < threshold
-        ? 'Rate ' + currentRate.toFixed(1) + 'p — holding battery for target slots (threshold ' + threshold.toFixed(1) + 'p)'
-        : 'Reserve floor reached — holding ' + reserveFloor + '% for standby';
-    } else { barEl.textContent = 'Active — monitoring rates'; }
+    else if (exportSlots.length === 0) { barEl.textContent = importRate ? 'No profitable export slots found today (import ' + importRate.toFixed(1) + 'p)' : 'Calculating strategy — check back shortly…'; }
+    else { barEl.textContent = exportSlots.length + ' profitable slot' + (exportSlots.length !== 1 ? 's' : '') + ' found' + (needsCharge ? ' — will charge to ' + chargeTargetPct + '% first' : ''); }
   }
 
-  const strategyCard = document.getElementById('hol-strategy-card');
-  const summaryEl = document.getElementById('hol-strategy-summary');
-  const slotsEl = document.getElementById('hol-strategy-slots');
-  if (strategyCard) strategyCard.style.display = enabled ? '' : 'none';
-  if (summaryEl && enabled) {
-    summaryEl.innerHTML = targetSlots.length > 0
-      ? 'Targeting <strong>' + slotsAvailable + '</strong> slot' + (slotsAvailable !== 1 ? 's' : '') + ' at <strong>' + (threshold > 0 ? threshold.toFixed(1) + 'p' : '—') + '</strong> or above — battery reserved until then.'
-      : 'Calculating today\'s strategy — check back in a moment…';
+  const strategyCard = document.getElementById('day-strategy-card');
+  const summaryEl = document.getElementById('day-strategy-summary');
+  const slotsEl = document.getElementById('day-strategy-slots');
+  const profitEl = document.getElementById('day-strategy-profit');
+  const ctaEl = document.getElementById('day-strategy-cta');
+  // Strategy card is always visible so users can preview opportunity
+  if (ctaEl) ctaEl.style.display = (!enabled && exportSlots.length > 0) ? '' : 'none';
+
+  if (summaryEl) {
+    if (exportSlots.length > 0) {
+      summaryEl.innerHTML = '<strong>' + exportSlots.length + '</strong> profitable export slot' + (exportSlots.length !== 1 ? 's' : '') +
+        (importRate ? ' · import rate <strong>' + importRate.toFixed(1) + 'p</strong>' : '') +
+        (needsCharge ? ' · charging to <strong>' + chargeTargetPct + '%</strong> first' : '');
+    } else {
+      summaryEl.textContent = 'Rates load at 05:30 — check back then to see today\'s opportunity.';
+    }
   }
-  if (slotsEl && enabled && targetSlots.length > 0) {
+
+  if (slotsEl && enabled) {
     const londonNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/London' }));
     const nowMins = londonNow.getHours() * 60 + londonNow.getMinutes();
-    slotsEl.innerHTML = targetSlots.map(s => {
+    let html = '';
+
+    // Charge slot (if needed)
+    if (chargeSlot && needsCharge) {
+      const [ceh, cem] = chargeSlot.endTime.split(':').map(Number);
+      const chargeEndMins = ceh * 60 + cem;
+      const isPast = chargeEndMins <= nowMins;
+      const isCurrent = !isPast && nowMins < chargeEndMins;
+      const pillStyle = isCurrent ? 'background:#fef3c7;color:#92400e' : isPast ? 'background:#f2f2f7;color:#8e8e93' : 'background:#dbeafe;color:#1d4ed8';
+      const pillText = isCurrent ? 'charging' : isPast ? 'done' : 'upcoming';
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f2f2f7">'
+        + '<span style="font-size:11px;font-weight:700;background:#dbeafe;color:#1d4ed8;padding:2px 7px;border-radius:6px;min-width:48px;text-align:center">CHARGE</span>'
+        + '<span style="font-size:13px;font-weight:600;flex:1">05:30 → ' + chargeSlot.endTime + ' · target ' + chargeSlot.targetPct + '%'
+        + (chargeSlot.estimatedCostGbp > 0 ? ' · est. £' + chargeSlot.estimatedCostGbp.toFixed(2) : '') + '</span>'
+        + '<span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;' + pillStyle + '">' + pillText + '</span>'
+        + '</div>';
+    }
+
+    // Export slots
+    exportSlots.forEach(s => {
       const [sh, sm] = s.time.split(':').map(Number);
       const slotMins = sh * 60 + sm;
       const isPast = slotMins + 30 <= nowMins;
       const isCurrent = slotMins <= nowMins && nowMins < slotMins + 30;
-      const pillStyle = isCurrent
-        ? 'background:#d1fae5;color:#065f46'
-        : isPast ? 'background:#f2f2f7;color:#8e8e93' : 'background:#dbeafe;color:#1d4ed8';
+      const pillStyle = isCurrent ? 'background:#d1fae5;color:#065f46' : isPast ? 'background:#f2f2f7;color:#8e8e93' : 'background:#d1fae5;color:#065f46;opacity:0.6';
       const pillText = isCurrent ? 'now' : isPast ? 'done' : 'upcoming';
-      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f2f2f7">'
-        + '<span style="font-size:14px;font-weight:600">' + s.time + '</span>'
-        + '<span style="font-size:14px;color:#636366">' + s.rate.toFixed(1) + 'p</span>'
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f2f2f7">'
+        + '<span style="font-size:11px;font-weight:700;background:#d1fae5;color:#065f46;padding:2px 7px;border-radius:6px;min-width:48px;text-align:center">EXPORT</span>'
+        + '<span style="font-size:13px;font-weight:600">' + s.time + '</span>'
+        + '<span style="font-size:13px;color:#636366;flex:1;margin-left:6px">' + s.rate.toFixed(1) + 'p'
+        + (s.profit != null ? ' · <span style="color:#34c759">+' + s.profit.toFixed(1) + 'p profit</span>' : '') + '</span>'
         + '<span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;' + pillStyle + '">' + pillText + '</span>'
         + '</div>';
-    }).join('');
+    });
+    slotsEl.innerHTML = html || (enabled ? '<div style="color:#8e8e93;font-size:13px">No profitable slots found for today.</div>' : '');
   }
 
-  const kwhEl = document.getElementById('hol-kwh');
-  const avgRateEl = document.getElementById('hol-avg-rate');
-  const earnedEl = document.getElementById('hol-earned');
+  if (profitEl && enabled && exportSlots.length > 0) {
+    const estRevenue = data.dayEstimatedRevenue || 0;
+    const estCost = data.dayEstimatedImportCost || 0;
+    const estProfit = data.dayEstimatedProfit || 0;
+    profitEl.innerHTML = estRevenue > 0
+      ? 'Est. revenue <strong>£' + estRevenue.toFixed(2) + '</strong>' +
+        (estCost > 0 ? ' · import cost <strong>£' + estCost.toFixed(2) + '</strong>' : '') +
+        ' · net profit <strong style="color:#34c759">£' + estProfit.toFixed(2) + '</strong>'
+      : '';
+  }
+
+  const kwhEl = document.getElementById('day-kwh');
+  const earnedEl = document.getElementById('day-earned');
+  const importCostEl = document.getElementById('day-import-cost');
+  const netProfitEl = document.getElementById('day-net-profit');
   if (kwhEl) kwhEl.textContent = stats.kwh > 0 ? stats.kwh.toFixed(1) : '—';
-  if (avgRateEl) avgRateEl.textContent = stats.avgRate > 0 ? stats.avgRate.toFixed(1) + 'p' : '—p';
   if (earnedEl) earnedEl.textContent = stats.earned > 0 ? '£' + stats.earned.toFixed(2) : '£—';
+  if (importCostEl) importCostEl.textContent = stats.importCost > 0 ? '£' + stats.importCost.toFixed(2) : '£—';
+  if (netProfitEl) {
+    const net = (stats.earned || 0) - (stats.importCost || 0);
+    netProfitEl.textContent = stats.earned > 0 ? (net >= 0 ? '£' : '-£') + Math.abs(net).toFixed(2) : '£—';
+    netProfitEl.style.color = net >= 0 ? '#34c759' : '#ff3b30';
+  }
 }
 
 // ── Health ────────────────────────────────────────────────
