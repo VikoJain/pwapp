@@ -507,8 +507,11 @@ async function runCarSync(state, store, tokenData, settings, deviceId, phase1Res
     if (state.carSyncActive) {
       state.carSyncRecentStop = Date.now();
       try {
-        // Restore reserve to match phase: Phase 3 needs 100%, Phase 1 needs chargeTargetPct, else 0%
-        const reserveToRestore = state.phase === 3 ? 100 : state.phase === 1 ? phase1Reserve : 0;
+        // Restore reserve: Phase 3 = 100%, Phase 1 = chargeTargetPct, Day charging = 100%, else 0%
+        const reserveToRestore = state.phase === 3 ? 100
+          : state.phase === 1 ? phase1Reserve
+          : state.dayCharging ? 100
+          : 0;
         await setMode(access, apiBase, siteId, 'autonomous', reserveToRestore);
         state.carSyncActive = false;
         if (state.carSyncPausedExport) {
@@ -520,12 +523,18 @@ async function runCarSync(state, store, tokenData, settings, deviceId, phase1Res
           } else if (state.phase === 3) {
             log(state, 'Car sync: car stopped — Phase 3 active, reserve kept at 100%');
             await sendPush(store, deviceId, 'Car finished charging', 'Battery recharge continuing');
+          } else if (state.dayCharging) {
+            log(state, 'Car sync: car stopped — Day charge active, reserve kept at 100%');
+            await sendPush(store, deviceId, 'Car finished charging', 'Battery continuing to charge for export');
           } else {
             log(state, 'Car sync: car stopped — reserve reset to 0%');
           }
         } else if (state.phase === 3) {
           log(state, 'Car sync: car stopped — Phase 3 active, reserve kept at 100%');
           await sendPush(store, deviceId, 'Car finished charging', 'Battery recharge continuing');
+        } else if (state.dayCharging) {
+          log(state, 'Car sync: car stopped — Day charge active, reserve kept at 100%');
+          await sendPush(store, deviceId, 'Car finished charging', 'Battery continuing to charge for export');
         } else {
           log(state, 'Car sync: car stopped — reserve reset to 0%');
         }
