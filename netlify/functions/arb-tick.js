@@ -139,6 +139,24 @@ async function getOctopusRatesForWindow(store, periodFrom, periodTo, deviceId) {
   return [];
 }
 
+async function getImportDayRate(store, deviceId) {
+  try {
+    const settings = JSON.parse(await store.get('oct_settings_' + deviceId) || 'null');
+    if (!settings || !settings.octKey || !settings.octImportTariff || !settings.octImportProduct) return null;
+    const noon = new Date();
+    noon.setHours(12, 0, 0, 0);
+    const noonEnd = new Date(noon.getTime() + 30 * 60 * 1000);
+    const fmt = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const path = '/v1/products/' + settings.octImportProduct + '/electricity-tariffs/' + settings.octImportTariff +
+      '/standard-unit-rates/?period_from=' + fmt(noon) + '&period_to=' + fmt(noonEnd) + '&page_size=2';
+    const authHeader = 'Basic ' + Buffer.from(settings.octKey + ':').toString('base64');
+    const res = await makeRequest({ hostname: 'api.octopus.energy', path, method: 'GET', headers: { 'Authorization': authHeader } }, null);
+    const data = JSON.parse(res.body);
+    if (data.results && data.results.length > 0) return parseFloat(parseFloat(data.results[0].value_inc_vat).toFixed(2));
+  } catch (e) {}
+  return null;
+}
+
 async function wakeVehicle(token, apiBase, vehicleId) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/wake_up`, {}); }
 async function getVehicleState(token, apiBase, vehicleId) { const d = await teslaGet(token, apiBase, `/api/1/vehicles/${vehicleId}`); return d.response?.state || 'unknown'; }
 async function getVehicleChargeState(token, apiBase, vehicleId) {
@@ -151,51 +169,90 @@ async function vehicleChargeStart(token, apiBase, vehicleId) { return teslaPost(
 
 function fmt2(n) { return String(n).padStart(2, '0'); }
 
-async function runHolidayMode(state, store, tokenData, currentPctRaw, h, m, deviceId) {
-  const hs = JSON.parse(await store.get('holiday_settings_' + deviceId) || 'null') || {};
-  const stopHour = hs.stopHour !== undefined ? hs.stopHour : 23;
-  const stopMinute = hs.stopMinute !== undefined ? hs.stopMinute : 0;
+async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId) {
+  const ds = JSON.parse(await store.get('day_settings_' + deviceId) || 'null') ||
+             JSON.parse(await store.get('holiday_settings_' + deviceId) || 'null') || {};
+  const stopHour = ds.stopHour !== undefined ? ds.stopHour : 23;
+  const stopMinute = ds.stopMinute !== undefined ? ds.stopMinute : 0;
+  const minMargin = ds.minMargin !== undefined ? parseFloat(ds.minMargin) : 2.0;
   const { access, apiBase, energySiteId: siteId } = tokenData;
   const minuteOfDay = h * 60 + m;
   const stopMinuteOfDay = stopHour * 60 + stopMinute;
   const inWindow = minuteOfDay >= (5 * 60 + 30) && minuteOfDay < stopMinuteOfDay;
 
-  // Calculate day strategy before window guard — UI needs it even outside operating hours
+  // Build day strategy once per calendar day (before window guard so UI shows it at any time)
   const londonNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/London' }));
   const currentDateKey = `${londonNow.getFullYear()}-${londonNow.getMonth()}-${londonNow.getDate()}`;
-  if (state.holidayRatesCacheDay !== currentDateKey) {
+  if (state.dayRatesCacheDay !== currentDateKey) {
     const windowStart = new Date(); windowStart.setHours(5, 30, 0, 0);
     const stopTimeDate = new Date(); stopTimeDate.setHours(stopHour, stopMinute, 0, 0);
-    const dayRates = await getOctopusRatesForWindow(store, windowStart, stopTimeDate, deviceId);
+    const [exportRates, importRate] = await Promise.all([
+      getOctopusRatesForWindow(store, windowStart, stopTimeDate, deviceId),
+      getImportDayRate(store, deviceId)
+    ]);
+    state.dayImportRate = importRate;
+    const EFFICIENCY = 0.9;
     const pctForPlan = currentPctRaw >= 0 ? currentPctRaw : 0;
-    const floorForPlan = state.holidayReserveFloorPct != null ? state.holidayReserveFloorPct : 20;
-    const usableKwh = Math.max(0, (pctForPlan - floorForPlan) / 100 * 13.5);
-    const slotsAvailable = Math.max(1, Math.ceil(usableKwh / 5));
-    let threshold = 0;
-    let holidayTargetSlots = [];
-    if (dayRates.length > 0) {
-      const sorted = [...dayRates].sort((a, b) => b.value - a.value);
-      threshold = sorted[Math.min(slotsAvailable, sorted.length) - 1].value;
-      holidayTargetSlots = sorted.slice(0, slotsAvailable).map(s => {
+    let dayExportSlots = [], dayNeedsCharge = false, dayChargeTargetPct = pctForPlan, dayChargeSlot = null;
+    let dayEstimatedRevenue = 0, dayEstimatedImportCost = 0;
+    if (exportRates.length > 0 && importRate) {
+      const profitable = exportRates
+        .filter(r => (r.value * EFFICIENCY) - importRate >= minMargin)
+        .sort((a, b) => new Date(a.validFrom) - new Date(b.validFrom));
+      dayExportSlots = profitable.map(s => {
         const ls = new Date(new Date(s.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
-        return { time: String(ls.getHours()).padStart(2, '0') + ':' + String(ls.getMinutes()).padStart(2, '0'), rate: s.value };
-      }).sort((a, b) => a.time.localeCompare(b.time));
+        return { time: fmt2(ls.getHours()) + ':' + fmt2(ls.getMinutes()), rate: s.value, profit: parseFloat(((s.value * EFFICIENCY) - importRate).toFixed(1)) };
+      });
+      const currentKwh = pctForPlan / 100 * 13.5;
+      const neededKwh = dayExportSlots.length * 5 * 0.5; // 5kW per slot × 0.5hr
+      const chargeNeededKwh = Math.max(0, neededKwh - currentKwh);
+      dayNeedsCharge = chargeNeededKwh > 0.5 && profitable.length > 0;
+      dayChargeTargetPct = Math.min(100, Math.round(pctForPlan + (chargeNeededKwh / 13.5 * 100)));
+      if (dayNeedsCharge && profitable.length > 0) {
+        const firstLS = new Date(new Date(profitable[0].validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
+        dayChargeSlot = {
+          endTime: fmt2(firstLS.getHours()) + ':' + fmt2(firstLS.getMinutes()),
+          targetPct: dayChargeTargetPct,
+          estimatedCostGbp: parseFloat((chargeNeededKwh * importRate / 100).toFixed(2))
+        };
+        dayEstimatedImportCost = dayChargeSlot.estimatedCostGbp;
+      }
+      dayEstimatedRevenue = parseFloat((dayExportSlots.reduce((sum, s) => sum + s.rate * EFFICIENCY * 5 * 0.5, 0) / 100).toFixed(2));
+    } else if (exportRates.length > 0 && !importRate) {
+      // No import tariff configured — fall back to showing all export slots, no charge logic
+      dayExportSlots = exportRates
+        .sort((a, b) => b.value - a.value)
+        .slice(0, Math.max(1, Math.ceil((pctForPlan / 100 * 13.5) / 5)))
+        .map(s => {
+          const ls = new Date(new Date(s.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
+          return { time: fmt2(ls.getHours()) + ':' + fmt2(ls.getMinutes()), rate: s.value, profit: null };
+        }).sort((a, b) => a.time.localeCompare(b.time));
     }
-    if (dayRates.length > 0) {
-      state.holidayRatesCache = dayRates;
-      state.holidayRatesCacheDay = currentDateKey;
-      state.holidayRateThreshold = parseFloat(threshold.toFixed(1));
-      state.holidayTotalSlots = dayRates.length;
-      state.holidaySlotsAvailable = slotsAvailable;
-      state.holidayTargetSlots = holidayTargetSlots;
+    if (exportRates.length > 0) {
+      state.dayRatesCacheDay = currentDateKey;
+      state.dayExportSlots = dayExportSlots;
+      state.dayNeedsCharge = dayNeedsCharge;
+      state.dayChargeTargetPct = dayChargeTargetPct;
+      state.dayChargeSlot = dayChargeSlot;
+      state.dayEstimatedRevenue = dayEstimatedRevenue;
+      state.dayEstimatedImportCost = dayEstimatedImportCost;
+      state.dayEstimatedProfit = parseFloat((dayEstimatedRevenue - dayEstimatedImportCost).toFixed(2));
+      log(state, 'Day: strategy — ' + dayExportSlots.length + ' export slot(s)' +
+        (dayNeedsCharge ? ', charge to ' + dayChargeTargetPct + '% first' : '') +
+        (importRate ? ' (import ' + importRate.toFixed(1) + 'p, margin ≥' + minMargin + 'p)' : ' (no import tariff — using existing battery)'));
     }
   }
 
   if (!inWindow) {
-    if (state.holidayExporting) {
+    if (state.dayExporting) {
       try { await setExport(access, apiBase, siteId, false); await setMode(access, apiBase, siteId, 'autonomous', 0); } catch(e) {}
-      state.holidayExporting = false;
-      log(state, 'Holiday: window ended at ' + fmt2(h) + ':' + fmt2(m) + ' — export off, ready for overnight cycle');
+      state.dayExporting = false;
+      log(state, 'Day: window ended at ' + fmt2(h) + ':' + fmt2(m) + ' — export off, ready for overnight cycle');
+    }
+    if (state.dayCharging) {
+      try { await setMode(access, apiBase, siteId, 'autonomous', 0); } catch(e) {}
+      state.dayCharging = false;
+      log(state, 'Day: window ended — charge off');
     }
     return;
   }
@@ -204,79 +261,127 @@ async function runHolidayMode(state, store, tokenData, currentPctRaw, h, m, devi
   const pctInt = Math.round(pct);
   const now = Date.now();
 
-  state.holidayConsumptionSamples = state.holidayConsumptionSamples || [];
-  if (!state.holidayExporting) {
-    if (state.holidayNonExportStart) {
-      const elapsed = (now - state.holidayNonExportStart.time) / 3600000;
+  // Adaptive standby consumption tracking — used to maintain reserve floor until stop time
+  state.dayConsumptionSamples = state.dayConsumptionSamples || [];
+  if (!state.dayExporting && !state.dayCharging) {
+    if (state.dayNonExportStart) {
+      const elapsed = (now - state.dayNonExportStart.time) / 3600000;
       if (elapsed >= 0.25) {
-        const dropPct = state.holidayNonExportStart.pct - pct;
+        const dropPct = state.dayNonExportStart.pct - pct;
         if (dropPct > 0 && dropPct < 30) {
           const r = Math.max(0.02, Math.min(2.0, (dropPct / 100 * 13.5) / elapsed));
-          state.holidayConsumptionSamples.push(parseFloat(r.toFixed(3)));
-          if (state.holidayConsumptionSamples.length > 20) state.holidayConsumptionSamples.shift();
+          state.dayConsumptionSamples.push(parseFloat(r.toFixed(3)));
+          if (state.dayConsumptionSamples.length > 20) state.dayConsumptionSamples.shift();
         }
-        state.holidayNonExportStart = { pct, time: now };
+        state.dayNonExportStart = { pct, time: now };
       }
     } else {
-      state.holidayNonExportStart = { pct, time: now };
+      state.dayNonExportStart = { pct, time: now };
     }
   } else {
-    state.holidayNonExportStart = null;
+    state.dayNonExportStart = null;
   }
 
-  const samples = state.holidayConsumptionSamples;
+  const samples = state.dayConsumptionSamples;
   const measuredRate = samples.length >= 3 ? samples.reduce((s, v) => s + v, 0) / samples.length : 0.3;
-  state.holidayConsumptionKwhPerHr = parseFloat(measuredRate.toFixed(3));
+  state.dayConsumptionKwhPerHr = parseFloat(measuredRate.toFixed(3));
 
-  const hoursToStop = Math.max(0, (stopMinuteOfDay - minuteOfDay) / 60);
-  const requiredKwh = hoursToStop * measuredRate;
-  const reserveFloorPct = Math.min(95, Math.ceil((requiredKwh / 13.5) * 100));
-  state.holidayReserveFloorPct = reserveFloorPct;
+  let reserveFloorPct;
+  if (ds.awayMode === false && ds.manualFloorPct !== undefined) {
+    reserveFloorPct = Math.min(95, Math.max(0, parseInt(ds.manualFloorPct)));
+  } else {
+    const hoursToStop = Math.max(0, (stopMinuteOfDay - minuteOfDay) / 60);
+    const requiredKwh = hoursToStop * measuredRate;
+    reserveFloorPct = Math.min(95, Math.ceil((requiredKwh / 13.5) * 100));
+  }
+  state.dayReserveFloorPct = reserveFloorPct;
 
+  const exportSlots = state.dayExportSlots || [];
+  const firstExportMins = exportSlots.length > 0
+    ? (() => { const [sh, sm] = exportSlots[0].time.split(':').map(Number); return sh * 60 + sm; })()
+    : 9999;
+
+  // Determine if currently in a profitable export slot
+  let inExportSlot = false;
+  for (const slot of exportSlots) {
+    const [sh, sm] = slot.time.split(':').map(Number);
+    const slotMins = sh * 60 + sm;
+    if (minuteOfDay >= slotMins && minuteOfDay < slotMins + 30) { inExportSlot = true; break; }
+  }
+
+  // Force-charge logic: runs from 05:30 until first export slot or target reached
+  const shouldCharge = !!(state.dayNeedsCharge &&
+    minuteOfDay < firstExportMins &&
+    pctInt < (state.dayChargeTargetPct || 100) &&
+    !inExportSlot);
+
+  if (shouldCharge && !state.dayCharging && !state.dayExporting) {
+    try {
+      await setMode(access, apiBase, siteId, 'autonomous', 100);
+      state.dayCharging = true;
+      state.dayChargeStart = { pct, time: now };
+      log(state, 'Day: force charge started — battery at ' + pctInt + '%, target ' + state.dayChargeTargetPct + '%');
+      await sendPush(store, deviceId, 'Day: charging for export', 'Charging to ' + state.dayChargeTargetPct + '% before export window');
+    } catch(e) { log(state, 'Day: charge start error: ' + e.message); }
+  }
+
+  if (state.dayCharging && (!shouldCharge || inExportSlot)) {
+    try {
+      await setMode(access, apiBase, siteId, 'autonomous', 0);
+      state.dayCharging = false;
+      if (state.dayChargeStart) {
+        const kwhCharged = parseFloat((Math.max(0, pct - state.dayChargeStart.pct) / 100 * 13.5).toFixed(2));
+        const importCostActual = parseFloat((kwhCharged * (state.dayImportRate || 0) / 100).toFixed(2));
+        state.dayStats = state.dayStats || { kwh: 0, earned: 0, avgRate: 0, importCost: 0, rateSum: 0, rateSamples: 0 };
+        state.dayStats.importCost = parseFloat(((state.dayStats.importCost || 0) + importCostActual).toFixed(2));
+        const reason = pctInt >= (state.dayChargeTargetPct || 100) ? 'target reached' : 'export window starting';
+        log(state, 'Day: charge stopped (' + reason + ') — at ' + pctInt + '%, imported ~' + kwhCharged + ' kWh · £' + importCostActual);
+        state.dayChargeStart = null;
+      }
+    } catch(e) { log(state, 'Day: charge stop error: ' + e.message); }
+  }
+
+  // Export slot logic
   const rate = await getOctopusRate(store, deviceId);
-  state.holidayCurrentRate = rate;
+  state.dayCurrentRate = rate;
+  const shouldExport = inExportSlot && pctInt > reserveFloorPct && !state.dayCharging;
 
-  const dayRates = state.holidayRatesCache || [];
-  const threshold = state.holidayRateThreshold || 0;
-
-  const inTopThird = rate > 0 && dayRates.length > 0 && rate >= threshold;
-  const shouldExport = pctInt > reserveFloorPct && inTopThird;
-
-  if (shouldExport && !state.holidayExporting) {
+  if (shouldExport && !state.dayExporting) {
     try {
       await setMode(access, apiBase, siteId, 'autonomous', 0);
       await setExport(access, apiBase, siteId, true);
-      state.holidayExporting = true;
-      state.holidayExportStart = { pct, time: now, rate };
-      log(state, 'Holiday: export on — ' + rate.toFixed(1) + 'p (threshold ' + threshold.toFixed(1) + 'p, ' + (state.holidaySlotsAvailable || '?') + ' slots target), battery ' + pctInt + '%, floor ' + reserveFloorPct + '%');
-      await sendPush(store, deviceId, 'Holiday export started', rate.toFixed(1) + 'p/kWh · Battery at ' + pctInt + '%');
-    } catch(e) { log(state, 'Holiday: export start error: ' + e.message); }
-  } else if (!shouldExport && state.holidayExporting) {
+      state.dayExporting = true;
+      state.dayExportStart = { pct, time: now, rate };
+      log(state, 'Day: export on — ' + (rate > 0 ? rate.toFixed(1) + 'p' : 'rate unavailable') + ' (battery ' + pctInt + '%, floor ' + reserveFloorPct + '%)');
+      await sendPush(store, deviceId, 'Day export started', (rate > 0 ? rate.toFixed(1) + 'p/kWh · ' : '') + 'Battery at ' + pctInt + '%');
+    } catch(e) { log(state, 'Day: export start error: ' + e.message); }
+  } else if (!shouldExport && state.dayExporting) {
     try {
       await setExport(access, apiBase, siteId, false);
       await setMode(access, apiBase, siteId, 'autonomous', 0);
-      state.holidayExporting = false;
-      if (state.holidayExportStart) {
-        const durationHrs = (now - state.holidayExportStart.time) / 3600000;
-        const totalDropPct = state.holidayExportStart.pct - pct;
+      state.dayExporting = false;
+      if (state.dayExportStart) {
+        const durationHrs = (now - state.dayExportStart.time) / 3600000;
+        const totalDropPct = state.dayExportStart.pct - pct;
         const houseUsedPct = durationHrs * measuredRate / 13.5 * 100;
         const netExportedKwh = parseFloat((Math.max(0, totalDropPct - houseUsedPct) / 100 * 13.5).toFixed(2));
-        const avgPeriodRate = (state.holidayExportStart.rate + rate) / 2;
+        const useRate = state.dayExportStart.rate > 0 ? state.dayExportStart.rate : (rate > 0 ? rate : 0);
+        const avgPeriodRate = useRate > 0 && rate > 0 ? (useRate + rate) / 2 : useRate;
         const periodEarned = parseFloat((netExportedKwh * avgPeriodRate / 100).toFixed(2));
-        state.holidayStats = state.holidayStats || { kwh: 0, earned: 0, avgRate: 0, rateSum: 0, rateSamples: 0 };
-        state.holidayStats.kwh = parseFloat((state.holidayStats.kwh + netExportedKwh).toFixed(2));
-        state.holidayStats.earned = parseFloat((state.holidayStats.earned + periodEarned).toFixed(2));
-        state.holidayStats.rateSum = (state.holidayStats.rateSum || 0) + avgPeriodRate;
-        state.holidayStats.rateSamples = (state.holidayStats.rateSamples || 0) + 1;
-        state.holidayStats.avgRate = parseFloat((state.holidayStats.rateSum / state.holidayStats.rateSamples).toFixed(1));
-        state.holidayExportStart = null;
-        const reason = pctInt <= reserveFloorPct
-          ? 'reserve floor reached (' + pctInt + '% ≤ ' + reserveFloorPct + '%)'
-          : 'rate ' + rate.toFixed(1) + 'p below threshold (' + threshold.toFixed(1) + 'p)';
-        log(state, 'Holiday: export off — ' + reason + ' · ~' + netExportedKwh + ' kWh · £' + periodEarned);
-        await sendPush(store, deviceId, 'Holiday export ended', '~' + netExportedKwh + ' kWh · Est. £' + periodEarned);
+        state.dayStats = state.dayStats || { kwh: 0, earned: 0, avgRate: 0, importCost: 0, rateSum: 0, rateSamples: 0 };
+        state.dayStats.kwh = parseFloat((state.dayStats.kwh + netExportedKwh).toFixed(2));
+        state.dayStats.earned = parseFloat((state.dayStats.earned + periodEarned).toFixed(2));
+        if (avgPeriodRate > 0) {
+          state.dayStats.rateSum = (state.dayStats.rateSum || 0) + avgPeriodRate;
+          state.dayStats.rateSamples = (state.dayStats.rateSamples || 0) + 1;
+          state.dayStats.avgRate = parseFloat((state.dayStats.rateSum / state.dayStats.rateSamples).toFixed(1));
+        }
+        state.dayExportStart = null;
+        const reason = pctInt <= reserveFloorPct ? 'reserve floor (' + pctInt + '% ≤ ' + reserveFloorPct + '%)' : 'slot ended';
+        log(state, 'Day: export off — ' + reason + ' · ~' + netExportedKwh + ' kWh · £' + periodEarned);
+        await sendPush(store, deviceId, 'Day export ended', '~' + netExportedKwh + ' kWh · Est. £' + periodEarned);
       }
-    } catch(e) { log(state, 'Holiday: export stop error: ' + e.message); }
+    } catch(e) { log(state, 'Day: export stop error: ' + e.message); }
   }
 }
 
@@ -285,8 +390,7 @@ async function runCarSync(state, store, tokenData, settings, deviceId, phase1Res
   const { access, apiBase, energySiteId: siteId } = tokenData;
   const priority = settings.priority || 'export';
   const arbExporting = state.phase === 2;
-  const holidayExporting = !!state.holidayExporting;
-  const isExporting = arbExporting || holidayExporting;
+  const isExporting = arbExporting || !!state.dayExporting;
 
   // Export priority: stay dormant while actively exporting
   if (isExporting && priority === 'export') {
@@ -347,7 +451,7 @@ async function runCarSync(state, store, tokenData, settings, deviceId, phase1Res
         state.carSyncActive = false;
         if (state.carSyncPausedExport) {
           state.carSyncPausedExport = false;
-          if (state.phase === 2 || state.holidayExporting) {
+          if (state.phase === 2 || state.dayExporting) {
             try { await setExport(access, apiBase, siteId, true); } catch(e) {}
             log(state, 'Car sync: car stopped — reserve reset, export resumed');
             await sendPush(store, deviceId, 'Car finished charging', 'Export resumed');
@@ -415,7 +519,7 @@ async function processUser(store, deviceId) {
   const hasPctExport = pctExport && pctExport.targetPct !== undefined;
 
   // Skip live_status when fully idle — saves Tesla API calls at scale
-  const fullyIdle = !state.enabled && state.phase === 0 && !state.holidayEnabled && !carSyncEnabled && !hasPctExport && !pendingCmd;
+  const fullyIdle = !state.enabled && state.phase === 0 && !state.dayEnabled && !state.holidayEnabled && !carSyncEnabled && !hasPctExport && !pendingCmd;
   let currentPct = -1;
   if (!fullyIdle) {
     try {
@@ -479,7 +583,7 @@ async function processUser(store, deviceId) {
     if (!state.enabled && state.phase === 0 && !carSyncEnabled) return;
   }
 
-  if (!state.enabled && state.phase === 0 && !state.holidayEnabled && !carSyncEnabled) {
+  if (!state.enabled && state.phase === 0 && !state.dayEnabled && !state.holidayEnabled && !carSyncEnabled) {
     return;
   }
 
@@ -616,9 +720,11 @@ async function processUser(store, deviceId) {
     log(state, 'Error in phase ' + state.phase + ': ' + e.message);
   }
 
-  if (state.holidayEnabled && state.phase === 0) {
-    try { await runHolidayMode(state, store, tokenData, currentPct, h, m, deviceId); }
-    catch (e) { log(state, 'Holiday error: ' + e.message); }
+  if ((state.dayEnabled || state.holidayEnabled) && state.phase === 0) {
+    // Migrate legacy holidayEnabled to dayEnabled
+    if (state.holidayEnabled && !state.dayEnabled) { state.dayEnabled = true; state.holidayEnabled = false; }
+    try { await runDayMode(state, store, tokenData, currentPct, h, m, deviceId); }
+    catch (e) { log(state, 'Day error: ' + e.message); }
   }
 
   if (carSyncEnabled) {
