@@ -45,9 +45,9 @@ exports.handler = async (event) => {
       }
       const state = JSON.parse(await store.get(k('state')) || DEFAULT_STATE);
       const arbSettings = JSON.parse(await store.get(k('arb_settings')) || 'null');
-      const holidaySettings = JSON.parse(await store.get(k('holiday_settings')) || 'null');
+      const daySettings = JSON.parse(await store.get(k('day_settings')) || await store.get(k('holiday_settings')) || 'null');
       const carSyncSettings = JSON.parse(await store.get(k('car_sync_settings')) || 'null');
-      return { statusCode: 200, headers: CORS, body: JSON.stringify({ ...state, arbSettings, holidaySettings, carSyncSettings }) };
+      return { statusCode: 200, headers: CORS, body: JSON.stringify({ ...state, arbSettings, daySettings, carSyncSettings }) };
     }
 
     if (event.httpMethod === 'POST') {
@@ -68,7 +68,9 @@ exports.handler = async (event) => {
           octKey: body.octKey,
           octTariff: body.octTariff,
           octProduct: body.octProduct,
-          octAccount: body.octAccount
+          octAccount: body.octAccount,
+          octImportTariff: body.octImportTariff || null,
+          octImportProduct: body.octImportProduct || null
         }));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
@@ -87,27 +89,36 @@ exports.handler = async (event) => {
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
 
-      if (body.action === 'toggle_holiday') {
-        state.holidayEnabled = !!body.enabled;
+      if (body.action === 'toggle_day' || body.action === 'toggle_holiday') {
+        state.dayEnabled = !!body.enabled;
+        state.holidayEnabled = false;
         if (body.enabled) {
-          state.holidayStats = { kwh: 0, earned: 0, avgRate: 0, rateSum: 0, rateSamples: 0 };
-          state.holidayConsumptionSamples = [];
-          state.holidayNonExportStart = null;
-          state.holidayExportStart = null;
-          state.holidayExporting = false;
-          state.holidayRatesCacheDay = null;
-          state.holidayTargetSlots = [];
+          state.dayStats = { kwh: 0, earned: 0, avgRate: 0, importCost: 0, rateSum: 0, rateSamples: 0 };
+          state.dayConsumptionSamples = [];
+          state.dayNonExportStart = null;
+          state.dayExportStart = null;
+          state.dayExporting = false;
+          state.dayCharging = false;
+          state.dayChargeStart = null;
+          state.dayRatesCacheDay = null;
+          state.dayExportSlots = [];
+          state.dayChargeSlot = null;
+          state.dayNeedsCharge = false;
         } else {
-          state.holidayExporting = false;
+          state.dayExporting = false;
+          state.dayCharging = false;
         }
         await store.set(k('state'), JSON.stringify(state));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
 
-      if (body.action === 'save_holiday_settings') {
-        await store.set(k('holiday_settings'), JSON.stringify({
+      if (body.action === 'save_day_settings' || body.action === 'save_holiday_settings') {
+        await store.set(k('day_settings'), JSON.stringify({
           stopHour: body.stopHour !== undefined ? parseInt(body.stopHour) : 23,
-          stopMinute: body.stopMinute !== undefined ? parseInt(body.stopMinute) : 0
+          stopMinute: body.stopMinute !== undefined ? parseInt(body.stopMinute) : 0,
+          minMargin: body.minMargin !== undefined ? parseFloat(body.minMargin) : 2.0,
+          awayMode: body.awayMode !== false,
+          manualFloorPct: body.manualFloorPct !== undefined ? parseInt(body.manualFloorPct) : 20
         }));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
