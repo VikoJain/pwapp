@@ -289,9 +289,9 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       state.dayEstimatedRevenue = dayEstimatedRevenue;
       state.dayEstimatedImportCost = dayEstimatedImportCost;
       state.dayEstimatedProfit = parseFloat((dayEstimatedRevenue - dayEstimatedImportCost).toFixed(2));
-      log(state, 'Day: strategy — best ' + dayExportSlots.length + '-slot window' +
-        (dayExportSlots.length > 0 ? ' ' + dayExportSlots[0].time + '–' + (() => { const last = dayExportSlots[dayExportSlots.length-1]; const [h2,m2] = last.time.split(':').map(Number); const end = h2*60+m2+30; return fmt2(Math.floor(end/60))+':'+fmt2(end%60); })() : '') +
-        ' (of ' + profitable.length + ' profitable slots, battery fits ' + maxSlots + ')' +
+      const windowEnd = dayExportSlots.length > 0 ? (() => { const last = dayExportSlots[dayExportSlots.length-1]; const [h2,m2] = last.time.split(':').map(Number); const end = h2*60+m2+30; return fmt2(Math.floor(end/60))+':'+fmt2(end%60); })() : '';
+      log(state, 'Day: strategy — ' + dayExportSlots.length + '-slot window' +
+        (dayExportSlots.length > 0 ? ' ' + dayExportSlots[0].time + '–' + windowEnd : '') +
         (dayNeedsCharge ? ', charging ' + (dayChargeSlot ? dayChargeSlot.startTime + '→' + dayChargeSlot.endTime : '') : '') +
         (importRate ? ' · import ' + importRate.toFixed(1) + 'p' : ' · no import tariff'));
     }
