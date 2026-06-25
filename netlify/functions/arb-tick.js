@@ -139,22 +139,29 @@ async function getOctopusRatesForWindow(store, periodFrom, periodTo, deviceId) {
   return [];
 }
 
-async function getImportDayRate(store, deviceId) {
+async function getImportRateAtHour(store, deviceId, hour) {
   try {
     const settings = JSON.parse(await store.get('oct_settings_' + deviceId) || 'null');
     if (!settings || !settings.octKey || !settings.octImportTariff || !settings.octImportProduct) return null;
-    const noon = new Date();
-    noon.setHours(12, 0, 0, 0);
-    const noonEnd = new Date(noon.getTime() + 30 * 60 * 1000);
+    const t = new Date(); t.setHours(hour, 0, 0, 0);
+    const tEnd = new Date(t.getTime() + 30 * 60 * 1000);
     const fmt = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
     const path = '/v1/products/' + settings.octImportProduct + '/electricity-tariffs/' + settings.octImportTariff +
-      '/standard-unit-rates/?period_from=' + fmt(noon) + '&period_to=' + fmt(noonEnd) + '&page_size=2';
+      '/standard-unit-rates/?period_from=' + fmt(t) + '&period_to=' + fmt(tEnd) + '&page_size=2';
     const authHeader = 'Basic ' + Buffer.from(settings.octKey + ':').toString('base64');
     const res = await makeRequest({ hostname: 'api.octopus.energy', path, method: 'GET', headers: { 'Authorization': authHeader } }, null);
     const data = JSON.parse(res.body);
     if (data.results && data.results.length > 0) return parseFloat(parseFloat(data.results[0].value_inc_vat).toFixed(2));
   } catch (e) {}
   return null;
+}
+
+async function getImportDayRate(store, deviceId) {
+  return getImportRateAtHour(store, deviceId, 12); // noon = Go standard/daytime rate
+}
+
+async function getGoOffPeakRate(store, deviceId) {
+  return getImportRateAtHour(store, deviceId, 2); // 2am = Go off-peak rate
 }
 
 async function wakeVehicle(token, apiBase, vehicleId) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/wake_up`, {}); }
@@ -700,11 +707,13 @@ async function processUser(store, deviceId) {
     }
     else if (state.phase === 0 && state.enabled && h === startHour && m >= startMinute) {
       state.phase = 1;
-      state.stats = { kwh: 0, rate: 0, earned: 0, phase2StartPct: 0 };
+      state.stats = { kwh: 0, rate: 0, earned: 0, phase2StartPct: 0, phase1StartPct: pct, offPeakRate: null, importCost: 0, profit: 0 };
       log(state, '=== Arbitrage cycle started ===');
       await setMode(access, apiBase, siteId, 'autonomous', chargeTargetPct);
       log(state, 'Phase 1: Reserve set to ' + chargeTargetPct + '% — charging from grid');
       await sendPush(store, deviceId, 'Overnight cycle started', 'Charging battery to ' + chargeTargetPct + '%');
+      // Fetch off-peak rate for import cost tracking (non-blocking — stored for later calculation)
+      getGoOffPeakRate(store, deviceId).then(r => { if (r) state.stats.offPeakRate = r; }).catch(() => {});
     }
     else if (state.phase === 1) {
       if (m % 10 === 0) log(state, 'Phase 1 charging — battery at ' + pct + '%');
@@ -718,6 +727,7 @@ async function processUser(store, deviceId) {
         if (minsRemaining < exportMins + minExportWindow) {
           log(state, 'Export skipped — only ' + minsRemaining + ' min until ' + fmt2(endHour) + ':' + fmt2(endMinute) + ', need ~' + (exportMins + minExportWindow) + ' min — recharging instead');
           state.phase = 3;
+          state.stats.phase3StartPct = pct;
           await setMode(access, apiBase, siteId, 'autonomous', 100);
           log(state, 'Phase 3: Recharging from grid');
           await sendPush(store, deviceId, 'Overnight export skipped', 'Not enough time before ' + fmt2(endHour) + ':' + fmt2(endMinute) + ' — recharging instead');
@@ -725,6 +735,11 @@ async function processUser(store, deviceId) {
           state.phase = 2;
           const rate = await getOctopusRate(store, deviceId);
           state.stats.phase2StartPct = pct;
+          // Phase 1 import cost: kWh charged × off-peak rate
+          if (state.stats.offPeakRate) {
+            const phase1Kwh = Math.max(0, (pct - (state.stats.phase1StartPct || 0)) / 100 * 13.5);
+            state.stats.phase1ImportCost = parseFloat((phase1Kwh * state.stats.offPeakRate / 100).toFixed(2));
+          }
           state.stats.rateSum = rate;
           state.stats.rateSamples = rate > 0 ? 1 : 0;
           state.stats.rate = rate;
@@ -763,6 +778,7 @@ async function processUser(store, deviceId) {
         state.stats.earned = earned;
         log(state, 'Est. £' + earned.toFixed(2) + ' earned (' + kwhExported + ' kWh @ ' + avgRate.toFixed(1) + 'p avg)');
         state.phase = 3;
+        state.stats.phase3StartPct = pct;
         await setExport(access, apiBase, siteId, false);
         await setMode(access, apiBase, siteId, 'autonomous', 100);
         log(state, 'Phase 3: Export off — reserve set to 100%, recharging from grid');
@@ -780,6 +796,12 @@ async function processUser(store, deviceId) {
     else if (state.phase === 3) {
       const phase3PastEnd = h > endHour || (h === endHour && m >= endMinute);
       if (phase3PastEnd) {
+        if (state.stats.offPeakRate) {
+          const phase3Kwh = Math.max(0, (pct - (state.stats.phase3StartPct || 2)) / 100 * 13.5);
+          state.stats.phase3ImportCost = parseFloat((phase3Kwh * state.stats.offPeakRate / 100).toFixed(2));
+          state.stats.importCost = parseFloat(((state.stats.phase1ImportCost || 0) + (state.stats.phase3ImportCost || 0)).toFixed(2));
+          state.stats.profit = parseFloat((state.stats.earned - state.stats.importCost).toFixed(2));
+        }
         log(state, 'Phase 3 ended at ' + fmt2(endHour) + ':' + fmt2(endMinute) + ' — battery at ' + pct + '% — normal mode restored');
         await sendPush(store, deviceId, 'Overnight cycle ended', 'End time reached · Battery at ' + pct + '% · Normal mode restored');
         state.phase = 0;
@@ -796,6 +818,12 @@ async function processUser(store, deviceId) {
       }
     }
     else if (state.phase === 4 && (h > endHour || (h === endHour && m >= endMinute))) {
+      if (state.stats.offPeakRate) {
+        const phase3Kwh = Math.max(0, (pct - (state.stats.phase3StartPct || 2)) / 100 * 13.5);
+        state.stats.phase3ImportCost = parseFloat((phase3Kwh * state.stats.offPeakRate / 100).toFixed(2));
+        state.stats.importCost = parseFloat(((state.stats.phase1ImportCost || 0) + (state.stats.phase3ImportCost || 0)).toFixed(2));
+        state.stats.profit = parseFloat((state.stats.earned - state.stats.importCost).toFixed(2));
+      }
       state.phase = 0;
       await setExport(access, apiBase, siteId, false);
       await setMode(access, apiBase, siteId, 'autonomous', 0);
