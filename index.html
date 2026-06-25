@@ -655,7 +655,22 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           <div style="font-size:11px;color:#8e8e93;margin-top:4px">The app will never export below this level — useful to keep enough for the washing machine, dishwasher, etc.</div>
         </div>
         <div id="day-away-note" style="font-size:11px;color:#8e8e93;margin-top:8px;line-height:1.5">When away, the app measures your standby consumption (fridge, router, etc.) and calculates the minimum battery needed to keep the house running until the stop time.</div>
-        <div style="font-size:11px;color:#8e8e93;margin-top:8px;line-height:1.5">At 05:30 the app compares today's Agile export rates against your import tariff. Slots where the spread exceeds the margin are targeted. If the battery needs topping up first, it charges from the grid automatically.</div>
+        <div style="font-size:11px;font-weight:600;color:#8e8e93;text-transform:uppercase;letter-spacing:.06em;margin-top:14px;margin-bottom:8px">Strategy</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-lbl">Sell</div>
+            <div class="settings-sub">Export overnight charge at today's best slots</div>
+          </div>
+          <button class="toggle" id="day-sell-toggle" onclick="this.classList.toggle('on')"></button>
+        </div>
+        <div class="settings-row" style="margin-top:8px">
+          <div>
+            <div class="settings-lbl">Arbitrage</div>
+            <div class="settings-sub">Import from grid when spread is profitable</div>
+          </div>
+          <button class="toggle" id="day-arb-toggle" onclick="this.classList.toggle('on')"></button>
+        </div>
+        <div style="font-size:11px;color:#8e8e93;margin-top:8px;line-height:1.5">Sell uses your overnight charge — no grid import needed. Arbitrage imports from grid just before high-rate windows when the spread covers the cost. Both can run on the same day.</div>
         <button class="btn-primary" style="margin-top:12px" onclick="saveDaySettings()">Save settings</button>
         <div id="day-settings-result" style="font-size:12px;margin-top:8px;min-height:16px"></div>
       </div>
@@ -2169,13 +2184,15 @@ async function saveDaySettings() {
   const minMargin = parseFloat(document.getElementById('day-min-margin').value) || 2.0;
   const awayMode = document.getElementById('day-away-btn').classList.contains('active');
   const manualFloorPct = parseInt(document.getElementById('day-manual-floor').value) || 20;
+  const sellEnabled = document.getElementById('day-sell-toggle').classList.contains('on');
+  const arbEnabled = document.getElementById('day-arb-toggle').classList.contains('on');
   const btn = document.querySelector('[onclick="saveDaySettings()"]');
   const result = document.getElementById('day-settings-result');
   btn.disabled = true; result.textContent = 'Saving…'; result.style.color = '#8e8e93';
   try {
     await fetch('/.netlify/functions/arb-api', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'save_day_settings', stopHour, stopMinute, minMargin, awayMode, manualFloorPct, device_id: getDeviceId() })
+      body: JSON.stringify({ action: 'save_day_settings', stopHour, stopMinute, minMargin, awayMode, manualFloorPct, sellEnabled, arbEnabled, device_id: getDeviceId() })
     });
     result.textContent = 'Settings saved.'; result.style.color = '#1a7f37';
     toast('Day settings saved');
@@ -2192,6 +2209,10 @@ function populateDaySettings(s) {
   const floorEl = document.getElementById('day-manual-floor');
   if (floorEl && s.manualFloorPct !== undefined) floorEl.value = s.manualFloorPct;
   setDayMode(s.awayMode === false ? 'home' : 'away');
+  const sellToggle = document.getElementById('day-sell-toggle');
+  const arbToggle = document.getElementById('day-arb-toggle');
+  if (sellToggle) sellToggle.classList.toggle('on', s.sellEnabled !== false);
+  if (arbToggle) arbToggle.classList.toggle('on', s.arbEnabled !== false);
 }
 
 // ── Push notifications ──────────────────────────────────────────────────────
@@ -2449,11 +2470,15 @@ function renderDayUI(data) {
       const isCurrent = slotMins <= nowMins && nowMins < slotMins + 30;
       const pillStyle = isCurrent ? 'background:#d1fae5;color:#065f46' : isPast ? 'background:#f2f2f7;color:#8e8e93' : 'background:#d1fae5;color:#065f46;opacity:0.6';
       const pillText = isCurrent ? 'now' : isPast ? 'done' : 'upcoming';
+      const isSell = s.type === 'sell';
+      const badgeBg = isSell ? '#fef3c7' : '#d1fae5';
+      const badgeCol = isSell ? '#92400e' : '#065f46';
+      const badgeText = isSell ? 'SELL' : 'ARB';
       html += '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f2f2f7">'
-        + '<span style="font-size:11px;font-weight:700;background:#d1fae5;color:#065f46;padding:2px 7px;border-radius:6px;min-width:48px;text-align:center">EXPORT</span>'
+        + '<span style="font-size:11px;font-weight:700;background:' + badgeBg + ';color:' + badgeCol + ';padding:2px 7px;border-radius:6px;min-width:40px;text-align:center">' + badgeText + '</span>'
         + '<span style="font-size:13px;font-weight:600">' + s.time + '</span>'
         + '<span style="font-size:13px;color:#636366;flex:1;margin-left:6px">' + s.rate.toFixed(1) + 'p'
-        + (s.profit != null ? ' · <span style="color:#34c759">+' + s.profit.toFixed(1) + 'p/kWh profit</span>' : '') + '</span>'
+        + (s.profit != null ? ' · <span style="color:#34c759">+' + s.profit.toFixed(1) + 'p/kWh</span>' : '') + '</span>'
         + '<span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;' + pillStyle + '">' + pillText + '</span>'
         + '</div>';
     });
