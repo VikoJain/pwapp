@@ -531,11 +531,10 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         <div class="card-title">Last night's earnings</div>
         <div class="arb-earnings-4">
           <div class="arb-earn-card"><div class="arb-earn-val" id="arb-kwh">—</div><div class="arb-earn-lbl">kWh exported</div></div>
-          <div class="arb-earn-card"><div class="arb-earn-val" id="arb-rate">—p</div><div class="arb-earn-lbl">Avg rate</div></div>
           <div class="arb-earn-card"><div class="arb-earn-val" id="arb-earned">£—</div><div class="arb-earn-lbl">Revenue</div></div>
+          <div class="arb-earn-card"><div class="arb-earn-val" id="arb-import-cost">£—</div><div class="arb-earn-lbl">Cost</div></div>
           <div class="arb-earn-card"><div class="arb-earn-val" id="arb-profit" style="color:#34c759">£—</div><div class="arb-earn-lbl">Profit</div></div>
         </div>
-        <div style="font-size:10px;color:#aeaeb2;margin-top:6px">Import cost not yet tracked — profit shown as revenue</div>
       </div>
 
     </div>
@@ -661,14 +660,14 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
             <div class="settings-lbl">Sell</div>
             <div class="settings-sub">Export overnight charge at today's best slots</div>
           </div>
-          <button class="toggle" id="day-sell-toggle" onclick="this.classList.toggle('on')"></button>
+          <button class="toggle on" id="day-sell-toggle" onclick="this.classList.toggle('on')"></button>
         </div>
         <div class="settings-row" style="margin-top:8px">
           <div>
             <div class="settings-lbl">Arbitrage</div>
             <div class="settings-sub">Import from grid when spread is profitable</div>
           </div>
-          <button class="toggle" id="day-arb-toggle" onclick="this.classList.toggle('on')"></button>
+          <button class="toggle on" id="day-arb-toggle" onclick="this.classList.toggle('on')"></button>
         </div>
         <div style="font-size:11px;color:#8e8e93;margin-top:8px;line-height:1.5">Sell uses your overnight charge — no grid import needed. Arbitrage imports from grid just before high-rate windows when the spread covers the cost. Both can run on the same day.</div>
         <button class="btn-primary" style="margin-top:12px" onclick="saveDaySettings()">Save settings</button>
@@ -770,8 +769,9 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 
       <div class="card">
         <div class="card-title">Tariff tab</div>
-        <div class="guide-intro">Shows your live Octopus Agile Outgoing export rates for today, and tomorrow's rates from around 4pm.</div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Rate chart</strong> — each bar is a 30-minute slot. <span class="green" style="font-weight:600">Green</span> = best (&gt;25p), <span class="blue" style="font-weight:600">blue</span> = good (18–25p), <span class="amber" style="font-weight:600">amber</span> = fair (&lt;18p).</div></div>
+        <div class="guide-intro">Shows your live Octopus Agile export rates for today and tomorrow, plus your Go import rate profile — so you can see the spread at a glance before deciding whether to run Day mode.</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Export chart</strong> — each bar is a 30-minute slot. <span class="green" style="font-weight:600">Green</span> = best (&gt;25p), <span class="blue" style="font-weight:600">blue</span> = good (18–25p), <span class="amber" style="font-weight:600">amber</span> = fair (&lt;18p). Switch between today and tomorrow with the buttons at the top.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Import chart</strong> — shows your Go tariff rate profile across the day: blue bars are the off-peak rate (23:30–05:30), grey bars are the standard daytime rate. The spread between the two charts shows where arbitrage is profitable.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Best export windows</strong> — the top 5 slots ranked by rate. Use this to plan manual exports or to sense-check whether the overnight cycle is running at the right time.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Earnings estimator</strong> — enter a kWh figure to see what it would earn at the current rate. Useful for a quick calculation before a manual export.</div></div>
       </div>
@@ -825,20 +825,31 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Start time</strong> — set this to when your cheap overnight import rate begins. Common choices: 23:30 (Agile or Octopus Go), 02:00 (Cosy). Check your import tariff.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>End time</strong> — when the cycle finishes and normal operation resumes. 05:30 works for most tariffs. Set it before your cheap rate window ends.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Car charging control</strong> — if your Tesla car charges overnight, enable this. Phase 2 stops the car charging to maximise your export, then resumes it in Phase 3. If you use Octopus car sync with Car first priority, Phase 2 export is paused instead so the battery charges alongside the car.</div></div>
+        <div class="guide-section-lbl">Earnings</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>kWh exported / Revenue / Cost / Profit</strong> — the Night tab tracks all four. Cost covers the grid electricity used to charge the battery in Phase 1 and Phase 3, calculated at your Go off-peak rate. Profit = Revenue − Cost.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Earnings are estimates.</strong> The app calculates from battery capacity and Agile rates. Your actual Octopus credit may differ slightly due to meter timing and standing charges.</div></div>
         <div class="guide-section-lbl">Octopus car sync</div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Sync battery with car</strong> — detects whenever your car is charging (for example on an Octopus Go or Intelligent Octopus schedule) and charges the Powerwall at the same time, using the same cheap rate window.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Car sync pauses during Phase 1</strong> — while the battery is charging in Phase 1, car sync is suspended. This prevents the car's large load from competing with battery charging and causing the Powerwall to discharge to supply the car.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Export first</strong> — if the car starts charging while the Powerwall is exporting, the export continues uninterrupted. The Powerwall syncs with the car only outside of active export phases.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Car first</strong> — if the car starts charging while the Powerwall is exporting, the export is paused and the Powerwall charges alongside the car. Export resumes automatically when the car finishes. If the car is charging during Phase 3, the recharge simply continues — no action needed.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Car first</strong> — if the car starts charging while the Powerwall is exporting, the export is paused and the Powerwall charges alongside the car. Export resumes automatically when the car finishes.</div></div>
       </div>
 
       <div class="card">
         <div class="card-title">Day tab</div>
-        <div class="guide-intro">Profits from daytime Agile rate spreads. At 05:30 it fetches today's export rates and your Go import rate, then identifies slots where the spread (after 10% round-trip losses) exceeds your minimum margin.</div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Just-in-time charging</strong> — if the battery needs topping up before a profitable window, the app calculates exactly how long charging will take and starts as late as possible. This avoids the house consuming grid-charged energy for hours before the export window begins.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Strategy card always visible</strong> — you can see today's profitable slots and estimated net profit before deciding whether to enable Day mode. The card shows the charge window and each export slot with its p/kWh profit margin.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Import tariff auto-detected</strong> — reconnect your Octopus account to pick up both your export (Agile) and import (Go) tariffs. The profit calculation uses your actual live import rate with no manual entry needed.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Away vs At home</strong> — when away, the app auto-calculates a reserve floor based on your standby consumption (fridge, router etc.) to keep the house powered until the stop time. When at home, set your own floor to guarantee enough battery for appliances like the washing machine.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Minimum profit margin</strong> — the default is 2p/kWh after losses. Raise it to only act on the strongest spread days; lower it if you want to catch more marginal slots.</div></div>
+        <div class="guide-intro">Manages daytime export using two independent strategies — Sell and Arbitrage — which can run separately or together on the same day.</div>
+        <div class="guide-section-lbl">Sell strategy</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>What it does</strong> — exports the battery charge left over from the overnight cycle at today's best available Agile slots. No grid import needed — it uses energy that was charged cheaply overnight.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Reserve floor</strong> — the app always keeps enough battery in reserve to power the house until the stop time. Away mode calculates this automatically from your measured standby consumption. At home mode lets you set a manual floor (e.g. 30%) to cover the washing machine, dishwasher, etc.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Slots shown with a yellow SELL badge</strong> — these come from your existing battery. No p/kWh profit margin is shown because the cost basis is your overnight charge, not the daytime import rate.</div></div>
+        <div class="guide-section-lbl">Arbitrage strategy</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>What it does</strong> — identifies slots where the export rate exceeds your daytime import rate by at least the minimum margin (after 10% round-trip losses). Imports from the grid just before the export window starts.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Just-in-time charging</strong> — the app calculates how long the charge will take and starts as late as possible, so the house does not consume grid-charged energy for hours before the export window.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Slots shown with a green ARB badge</strong> — these show the p/kWh profit margin after subtracting the import cost and round-trip losses.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Minimum profit margin</strong> — default 2p/kWh. Raise it to only act on strong spread days; lower it to catch more marginal slots.</div></div>
+        <div class="guide-section-lbl">Earnings</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>kWh exported / Revenue / Cost / Profit</strong> — Cost tracks actual grid import spend during arbitrage charge windows. Sell slots have no import cost so their revenue goes straight to profit.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Strategy card always visible</strong> — you can preview today's opportunity before enabling Day mode. Enable it to act on the strategy shown.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div>Day mode and overnight arbitrage work together automatically. Day mode handles the day, overnight arbitrage handles the night.</div></div>
       </div>
 
@@ -846,7 +857,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         <div class="card-title">Good practice</div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Check after your first overnight run.</strong> Open the Night tab in the morning — confirm all phases completed and earnings are showing. The phase timeline shows where the cycle got to.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Align your start time with your import tariff.</strong> Phase 1 charges from the grid — make sure this happens during your cheapest rate window, not outside it.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Earnings shown are estimates.</strong> The app calculates revenue based on battery capacity and Agile rates. Your actual Octopus credit may differ slightly due to meter timing and standing charges.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Earnings are estimates.</strong> The app calculates from battery capacity and Agile rates. Your actual Octopus credit may differ slightly due to meter timing and standing charges. Cost figures use your Go off-peak rate fetched live from the Octopus API.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Don't run manual exports during an overnight cycle.</strong> The automated cycle manages export mode itself — using the manual controls on the Home tab at the same time will interfere.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>The 5-day chart builds over time.</strong> It takes 5 days to become fully representative. During that period it shows however many days of history have been collected.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Enable push notifications.</strong> Go to Settings → Notifications and enable push notifications. You'll get an alert at each phase transition overnight so you can check the app is running correctly without staying awake.</div></div>
@@ -1868,11 +1879,15 @@ function renderArbUI() {
   // Stats — use > 0 check so a stored zero doesn't mask a missing value
   const stats = state.arbStats;
   document.getElementById('arb-kwh').textContent = stats.kwh > 0 ? stats.kwh.toFixed(1) : '—';
-  document.getElementById('arb-rate').textContent = stats.rate > 0 ? stats.rate.toFixed(1)+'p' : '—p';
   document.getElementById('arb-earned').textContent = stats.earned > 0 ? '£'+stats.earned.toFixed(2) : '£—';
-  // Profit = revenue (import cost not yet tracked on Night tab)
+  const importCostEl = document.getElementById('arb-import-cost');
+  if (importCostEl) importCostEl.textContent = stats.importCost > 0 ? '£'+stats.importCost.toFixed(2) : '£—';
   const profitEl = document.getElementById('arb-profit');
-  if (profitEl) profitEl.textContent = stats.earned > 0 ? '£'+stats.earned.toFixed(2) : '£—';
+  if (profitEl) {
+    const profit = stats.profit !== undefined ? stats.profit : (stats.earned || 0);
+    profitEl.textContent = stats.earned > 0 ? (profit >= 0 ? '£' : '-£') + Math.abs(profit).toFixed(2) : '£—';
+    profitEl.style.color = profit >= 0 ? '#34c759' : '#ff3b30';
+  }
 }
 
 function fmt2(n) { return String(n).padStart(2, '0'); }
@@ -2184,8 +2199,10 @@ async function saveDaySettings() {
   const minMargin = parseFloat(document.getElementById('day-min-margin').value) || 2.0;
   const awayMode = document.getElementById('day-away-btn').classList.contains('active');
   const manualFloorPct = parseInt(document.getElementById('day-manual-floor').value) || 20;
-  const sellEnabled = document.getElementById('day-sell-toggle').classList.contains('on');
-  const arbEnabled = document.getElementById('day-arb-toggle').classList.contains('on');
+  const sellToggleEl = document.getElementById('day-sell-toggle');
+  const arbToggleEl = document.getElementById('day-arb-toggle');
+  const sellEnabled = sellToggleEl ? sellToggleEl.classList.contains('on') : true;
+  const arbEnabled = arbToggleEl ? arbToggleEl.classList.contains('on') : true;
   const btn = document.querySelector('[onclick="saveDaySettings()"]');
   const result = document.getElementById('day-settings-result');
   btn.disabled = true; result.textContent = 'Saving…'; result.style.color = '#8e8e93';
