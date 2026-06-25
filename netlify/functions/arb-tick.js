@@ -169,6 +169,28 @@ async function vehicleChargeStart(token, apiBase, vehicleId) { return teslaPost(
 
 function fmt2(n) { return String(n).padStart(2, '0'); }
 
+function findBestConsecutiveWindow(slots, maxSlots) {
+  if (!slots.length || maxSlots < 1) return [];
+  const blocks = [], SLOT_KWH = 2.5, EFF = 0.9;
+  let blk = [];
+  for (const s of slots) {
+    if (!blk.length) { blk.push(s); continue; }
+    const gap = new Date(s.validFrom) - new Date(blk[blk.length - 1].validFrom);
+    if (gap <= 31 * 60 * 1000) { blk.push(s); } else { blocks.push(blk); blk = [s]; }
+  }
+  if (blk.length) blocks.push(blk);
+  let best = [], bestRev = 0;
+  for (const block of blocks) {
+    const w = Math.min(maxSlots, block.length);
+    for (let i = 0; i <= block.length - w; i++) {
+      const win = block.slice(i, i + w);
+      const rev = win.reduce((sum, s) => sum + s.value * EFF * SLOT_KWH, 0);
+      if (rev > bestRev) { bestRev = rev; best = win; }
+    }
+  }
+  return best;
+}
+
 async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId) {
   const ds = JSON.parse(await store.get('day_settings_' + deviceId) || 'null') ||
              JSON.parse(await store.get('holiday_settings_' + deviceId) || 'null') || {};
@@ -184,6 +206,16 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
   const londonNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/London' }));
   const currentDateKey = `${londonNow.getFullYear()}-${londonNow.getMonth()}-${londonNow.getDate()}`;
   if (state.dayRatesCacheDay !== currentDateKey) {
+    // Reset operational state for the new day — clears any stale charging/exporting
+    // state left over from yesterday (e.g. dayCharging=true when overnight arb ran overnight)
+    state.dayCharging = false;
+    state.dayChargeStart = null;
+    state.dayExporting = false;
+    state.dayExportStart = null;
+    state.dayConsumptionSamples = [];
+    state.dayNonExportStart = null;
+    state.dayChargeStartMins = null;
+
     const windowStart = new Date(); windowStart.setHours(5, 30, 0, 0);
     const stopTimeDate = new Date(); stopTimeDate.setHours(stopHour, stopMinute, 0, 0);
     const [exportRates, importRate] = await Promise.all([
@@ -192,95 +224,86 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     ]);
     state.dayImportRate = importRate;
     const EFFICIENCY = 0.9;
+    const SLOT_KWH = 2.5; // 5kW × 0.5hr
+    const CHARGE_RATE_KW = 3.68;
     const pctForPlan = currentPctRaw >= 0 ? currentPctRaw : 0;
-    let dayExportSlots = [], dayNeedsCharge = false, dayChargeTargetPct = pctForPlan, dayChargeSlot = null;
+    const planFloorPct = ds.awayMode === false && ds.manualFloorPct !== undefined ? ds.manualFloorPct : 10;
+    const usableKwh = Math.max(0, (100 - planFloorPct) / 100 * 13.5);
+    const maxSlotsFullBattery = Math.max(1, Math.floor(usableKwh / SLOT_KWH));
+    const sellEnabled = ds.sellEnabled !== false; // default true
+    const arbEnabled = ds.arbEnabled !== false;   // default true
+
+    const sortedRates = exportRates.slice().sort((a, b) => new Date(a.validFrom) - new Date(b.validFrom));
+    let arbWindow = [], sellWindow = [];
+    let dayExportSlots = [], dayNeedsCharge = false, dayChargeTargetPct = 100, dayChargeSlot = null;
     let dayEstimatedRevenue = 0, dayEstimatedImportCost = 0;
-    if (exportRates.length > 0 && importRate) {
-      const profitable = exportRates
-        .filter(r => (r.value * EFFICIENCY) - importRate >= minMargin)
-        .sort((a, b) => new Date(a.validFrom) - new Date(b.validFrom));
-      // Battery capacity: how many consecutive 30-min slots can we sustain?
-      const SLOT_KWH = 5 * 0.5; // 2.5 kWh per slot at 5kW
-      const planFloorPct = ds.awayMode === false && ds.manualFloorPct !== undefined ? ds.manualFloorPct : 10;
-      const usableKwh = Math.max(0, (100 - planFloorPct) / 100 * 13.5);
-      const maxSlots = Math.max(1, Math.floor(usableKwh / SLOT_KWH));
 
-      // Group profitable slots into consecutive blocks (30-min gaps only)
-      const blocks = [];
-      let blk = [];
-      for (const s of profitable) {
-        if (!blk.length) { blk.push(s); continue; }
-        const gap = new Date(s.validFrom) - new Date(blk[blk.length - 1].validFrom);
-        if (gap <= 31 * 60 * 1000) { blk.push(s); } else { blocks.push(blk); blk = [s]; }
-      }
-      if (blk.length) blocks.push(blk);
-
-      // Find the best consecutive window (sliding window within each block)
-      let bestWindow = [], bestRevenue = 0;
-      for (const block of blocks) {
-        const w = Math.min(maxSlots, block.length);
-        for (let i = 0; i <= block.length - w; i++) {
-          const win = block.slice(i, i + w);
-          const rev = win.reduce((sum, s) => sum + s.value * EFFICIENCY * SLOT_KWH, 0);
-          if (rev > bestRevenue) { bestRevenue = rev; bestWindow = win; }
-        }
+    if (exportRates.length > 0) {
+      // Arb strategy: spread-profitable slots, will import from grid
+      if (arbEnabled && importRate) {
+        const profitable = sortedRates.filter(r => (r.value * EFFICIENCY) - importRate >= minMargin);
+        arbWindow = findBestConsecutiveWindow(profitable, maxSlotsFullBattery);
       }
 
-      dayExportSlots = bestWindow.map(s => {
+      // Sell strategy: export existing battery at best slots (excluding arb time)
+      if (sellEnabled) {
+        const arbTimes = new Set(arbWindow.map(s => s.validFrom));
+        const forSell = sortedRates.filter(s => !arbTimes.has(s.validFrom));
+        const existingKwh = Math.max(0, (pctForPlan - planFloorPct) / 100 * 13.5);
+        const sellMaxSlots = Math.max(0, Math.floor(existingKwh / SLOT_KWH));
+        sellWindow = sellMaxSlots > 0 ? findBestConsecutiveWindow(forSell, sellMaxSlots) : [];
+      }
+
+      // Combine all slots chronologically, tagged by type
+      const combined = [
+        ...sellWindow.map(s => ({ ...s, slotType: 'sell' })),
+        ...arbWindow.map(s => ({ ...s, slotType: 'arb' }))
+      ].sort((a, b) => new Date(a.validFrom) - new Date(b.validFrom));
+
+      dayExportSlots = combined.map(s => {
         const ls = new Date(new Date(s.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
-        return { time: fmt2(ls.getHours()) + ':' + fmt2(ls.getMinutes()), rate: s.value, profit: parseFloat(((s.value * EFFICIENCY) - importRate).toFixed(1)) };
+        return {
+          time: fmt2(ls.getHours()) + ':' + fmt2(ls.getMinutes()),
+          rate: s.value,
+          profit: s.slotType === 'arb' && importRate ? parseFloat(((s.value * EFFICIENCY) - importRate).toFixed(1)) : null,
+          type: s.slotType
+        };
       });
 
-      // Future slots within the selected window for charge planning
-      const futureProfit = bestWindow.filter(s => {
+      // Charge planning: only for arb window, accounts for sell depletion
+      const futureArb = arbWindow.filter(s => {
         const ls = new Date(new Date(s.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
         return ls.getHours() * 60 + ls.getMinutes() > minuteOfDay;
       });
 
-      if (futureProfit.length > 0) {
-        const CHARGE_RATE_KW = 3.68;
-        const firstLS = new Date(new Date(futureProfit[0].validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
-        const firstExportMins = firstLS.getHours() * 60 + firstLS.getMinutes();
-
-        // Estimate battery % at first export assuming house drains at measured rate
-        // Default 0.3 kWh/hr until samples build up
+      if (futureArb.length > 0 && importRate) {
+        const firstArbLS = new Date(new Date(futureArb[0].validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
+        const firstArbMins = firstArbLS.getHours() * 60 + firstArbLS.getMinutes();
         const consumptionRate = state.dayConsumptionKwhPerHr > 0 ? state.dayConsumptionKwhPerHr : 0.3;
-        const hoursUntilExport = Math.max(0, (firstExportMins - minuteOfDay) / 60);
-        const estimatedDrainPct = Math.min(pctForPlan, (hoursUntilExport * consumptionRate / 13.5) * 100);
-        const estimatedPctAtExport = Math.max(0, pctForPlan - estimatedDrainPct);
-
-        // Charge needed = get from estimated level at export time up to 100%
-        const chargeNeededKwh = Math.max(0, (100 - estimatedPctAtExport) / 100 * 13.5);
+        // After sell, battery is at floor; if no sell, estimate drain from now to arb
+        const battAfterSell = sellWindow.length > 0 ? planFloorPct
+          : Math.max(0, pctForPlan - ((firstArbMins - minuteOfDay) / 60 * consumptionRate / 13.5 * 100));
+        const chargeNeededKwh = Math.max(0, (100 - battAfterSell) / 100 * 13.5);
         dayNeedsCharge = chargeNeededKwh > 0.5;
-        dayChargeTargetPct = 100; // Always aim for full battery entering export window
-
-        // Just-in-time: start charging only as late as possible before export
-        const chargeTimeMins = Math.ceil(chargeNeededKwh / CHARGE_RATE_KW * 60) + 15; // +15 min buffer
-        const chargeStartMins = Math.max(minuteOfDay, firstExportMins - chargeTimeMins);
+        dayChargeTargetPct = 100;
+        const chargeTimeMins = Math.ceil(chargeNeededKwh / CHARGE_RATE_KW * 60) + 15;
+        const chargeStartMins = Math.max(minuteOfDay, firstArbMins - chargeTimeMins);
         state.dayChargeStartMins = chargeStartMins;
-
         if (dayNeedsCharge) {
           dayChargeSlot = {
             startTime: fmt2(Math.floor(chargeStartMins / 60)) + ':' + fmt2(chargeStartMins % 60),
-            endTime: fmt2(firstLS.getHours()) + ':' + fmt2(firstLS.getMinutes()),
+            endTime: fmt2(firstArbLS.getHours()) + ':' + fmt2(firstArbLS.getMinutes()),
             targetPct: 100,
             estimatedCostGbp: parseFloat((chargeNeededKwh * importRate / 100).toFixed(2))
           };
           dayEstimatedImportCost = dayChargeSlot.estimatedCostGbp;
         }
       }
-      dayEstimatedRevenue = parseFloat((dayExportSlots.reduce((sum, s) => sum + s.rate * EFFICIENCY * 5 * 0.5, 0) / 100).toFixed(2));
-    } else if (exportRates.length > 0 && !importRate) {
-      // No import tariff configured — fall back to showing all export slots, no charge logic
-      dayExportSlots = exportRates
-        .sort((a, b) => b.value - a.value)
-        .slice(0, Math.max(1, Math.ceil((pctForPlan / 100 * 13.5) / 5)))
-        .map(s => {
-          const ls = new Date(new Date(s.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
-          return { time: fmt2(ls.getHours()) + ':' + fmt2(ls.getMinutes()), rate: s.value, profit: null };
-        }).sort((a, b) => a.time.localeCompare(b.time));
-    }
-    if (exportRates.length > 0) {
+
+      const sellRevenue = sellWindow.reduce((sum, s) => sum + s.value * EFFICIENCY * SLOT_KWH, 0) / 100;
+      const arbRevenue = arbWindow.reduce((sum, s) => sum + s.value * EFFICIENCY * SLOT_KWH, 0) / 100;
+      dayEstimatedRevenue = parseFloat((sellRevenue + arbRevenue).toFixed(2));
+
       state.dayRatesCacheDay = currentDateKey;
       state.dayExportSlots = dayExportSlots;
       state.dayNeedsCharge = dayNeedsCharge;
@@ -289,10 +312,9 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       state.dayEstimatedRevenue = dayEstimatedRevenue;
       state.dayEstimatedImportCost = dayEstimatedImportCost;
       state.dayEstimatedProfit = parseFloat((dayEstimatedRevenue - dayEstimatedImportCost).toFixed(2));
-      const windowEnd = dayExportSlots.length > 0 ? (() => { const last = dayExportSlots[dayExportSlots.length-1]; const [h2,m2] = last.time.split(':').map(Number); const end = h2*60+m2+30; return fmt2(Math.floor(end/60))+':'+fmt2(end%60); })() : '';
-      log(state, 'Day: strategy — ' + dayExportSlots.length + '-slot window' +
-        (dayExportSlots.length > 0 ? ' ' + dayExportSlots[0].time + '–' + windowEnd : '') +
-        (dayNeedsCharge ? ', charging ' + (dayChargeSlot ? dayChargeSlot.startTime + '→' + dayChargeSlot.endTime : '') : '') +
+      const sellCount = sellWindow.length, arbCount = arbWindow.length;
+      log(state, 'Day: strategy — ' + (sellCount ? sellCount + ' sell' : '') + (sellCount && arbCount ? ' + ' : '') + (arbCount ? arbCount + ' arb' : '') + ' slot(s)' +
+        (dayNeedsCharge && dayChargeSlot ? ', charge ' + dayChargeSlot.startTime + '→' + dayChargeSlot.endTime : '') +
         (importRate ? ' · import ' + importRate.toFixed(1) + 'p' : ' · no import tariff'));
     }
   }
@@ -369,9 +391,12 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     ? (() => { const [sh, sm] = futureSlots[0].time.split(':').map(Number); return sh * 60 + sm; })()
     : 9999;
 
-  // Just-in-time charge: only start when close enough to first export slot
+  // Just-in-time charge: only fire when the next upcoming slot is an arb slot (not sell)
+  const nextFutureSlot = futureSlots[0];
+  const nextIsArb = nextFutureSlot && nextFutureSlot.type === 'arb';
   const chargeStartMins = state.dayChargeStartMins || 0;
   const shouldCharge = !!(state.dayNeedsCharge &&
+    nextIsArb &&
     minuteOfDay >= chargeStartMins &&
     minuteOfDay < firstFutureExportMins &&
     pctInt < (state.dayChargeTargetPct || 100) &&
@@ -810,7 +835,10 @@ async function processUser(store, deviceId) {
     catch (e) { log(state, 'Day error: ' + e.message); }
   }
 
-  if (carSyncEnabled) {
+  // Skip car sync during Phase 1 — battery is already charging from grid and the car
+  // drawing power simultaneously can exceed the grid import limit, causing the Powerwall
+  // to discharge its own battery to supply the car load, creating an oscillation
+  if (carSyncEnabled && state.phase !== 1) {
     try { await runCarSync(state, store, tokenData, carSyncSettings, deviceId, chargeTargetPct); }
     catch (e) { log(state, 'Car sync error: ' + e.message); }
   }
