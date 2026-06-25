@@ -496,10 +496,10 @@ async function runCarSync(state, store, tokenData, settings, deviceId, phase1Res
     return;
   }
 
-  // Rate-limit vehicle checks: 1 min when active or recently stopped (re-arm window), 5 min when idle
+  // Rate-limit vehicle checks: 1 min when active or recently stopped, 2 min when idle
   const now = Date.now();
   const recentlyStopped = state.carSyncRecentStop && (now - state.carSyncRecentStop) < 10 * 60 * 1000;
-  const checkInterval = (state.carSyncActive || recentlyStopped) ? 60000 : 5 * 60 * 1000;
+  const checkInterval = (state.carSyncActive || recentlyStopped) ? 60000 : 2 * 60 * 1000;
   if (state.carSyncLastCheck && (now - state.carSyncLastCheck) < checkInterval) return;
   state.carSyncLastCheck = now;
 
