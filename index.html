@@ -2374,7 +2374,9 @@ function renderCarSyncUI(data) {
   if (carBtn) carBtn.style.cssText = priority === 'car' ? activeStyle : inactiveStyle;
 
   if (status && enabled) {
-    if (active) {
+    if (data.phase === 1) {
+      status.textContent = 'Paused — battery charging in Phase 1, resumes when export starts';
+    } else if (active) {
       status.textContent = 'Syncing — battery charging with car';
     } else if (chargingSince) {
       status.textContent = 'Car charging detected — confirming…';
