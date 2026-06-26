@@ -479,15 +479,45 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
   }
 }
 
-async function runCarSync(state, store, tokenData, settings, deviceId, phase1Reserve = 50) {
+async function runCarSync(state, store, tokenData, settings, deviceId, phase1Reserve = 50, arbSettings = {}) {
   if (!tokenData.vehicleId) return;
   const { access, apiBase, energySiteId: siteId } = tokenData;
   const priority = settings.priority || 'export';
   const arbExporting = state.phase === 2;
   const isExporting = arbExporting || !!state.dayExporting;
 
-  // Export priority: stay dormant while actively exporting
-  if (isExporting && priority === 'export') {
+  // Export-first during Phase 2: stay dormant, but if car control enabled send mid-cycle charge_stop
+  if (arbExporting && priority === 'export') {
+    if (state.carSyncActive) {
+      try { await setMode(access, apiBase, siteId, 'autonomous', 0); } catch(e) {}
+      state.carSyncActive = false;
+      state.carChargingSince = null;
+    }
+    // Mid-Phase-2 car control: if car starts charging during export, stop it
+    if (arbSettings.carControlEnabled && tokenData.vehicleId) {
+      const now2 = Date.now();
+      if (!state.midPhase2CarCheckTime || (now2 - state.midPhase2CarCheckTime) > 2 * 60 * 1000) {
+        state.midPhase2CarCheckTime = now2;
+        try {
+          const vState = await getVehicleState(access, apiBase, tokenData.vehicleId);
+          if (vState === 'online') {
+            const cs = await getVehicleChargeState(access, apiBase, tokenData.vehicleId);
+            if (cs === 'Charging' && !state.midPhase2CarStopSent) {
+              await wakeVehicle(access, apiBase, tokenData.vehicleId);
+              const limit = arbSettings.carChargeLimitPhase2 || 50;
+              await store.set('pending_vehicle_cmd_' + deviceId, JSON.stringify({ cmd: 'charge_stop', chargeLimit: limit, requestedAt: Date.now() }));
+              state.midPhase2CarStopSent = true;
+              log(state, 'Car sync: car started charging mid-Phase 2 (export-first) — sending charge stop');
+            }
+          }
+        } catch(e) {}
+      }
+    }
+    return;
+  }
+
+  // Day export with export-first: stay dormant
+  if (state.dayExporting && priority === 'export') {
     if (state.carSyncActive) {
       try { await setMode(access, apiBase, siteId, 'autonomous', 0); } catch(e) {}
       state.carSyncActive = false;
@@ -503,7 +533,6 @@ async function runCarSync(state, store, tokenData, settings, deviceId, phase1Res
   if (state.carSyncLastCheck && (now - state.carSyncLastCheck) < checkInterval) return;
   state.carSyncLastCheck = now;
 
-  // Skip charge state check if vehicle is asleep — sleeping cars are never charging
   let vehicleCharging = false;
   try {
     const vState = await getVehicleState(access, apiBase, tokenData.vehicleId);
@@ -517,13 +546,12 @@ async function runCarSync(state, store, tokenData, settings, deviceId, phase1Res
     if (!state.carChargingSince) state.carChargingSince = Date.now();
     const minsCharging = (Date.now() - state.carChargingSince) / 60000;
     if (minsCharging >= 2) {
-      // Pause export whenever Phase 2 starts while car sync is already active (e.g. car was
-      // charging since Phase 1 start on Octopus Go) — not just on initial activation
+      // Car-first during Phase 2: pause export, charge battery alongside car at cheap Go rate
       if (isExporting && priority === 'car' && !state.carSyncPausedExport) {
         try { await setExport(access, apiBase, siteId, false); } catch(e) {}
         try { await setMode(access, apiBase, siteId, 'autonomous', 100); } catch(e) {}
         state.carSyncPausedExport = true;
-        log(state, 'Car sync: pausing export — charging battery with car');
+        log(state, 'Car sync: pausing export — charging battery with car at cheap rate');
       }
       if (!state.carSyncActive) {
         try {
@@ -539,28 +567,43 @@ async function runCarSync(state, store, tokenData, settings, deviceId, phase1Res
     if (state.carSyncActive) {
       state.carSyncRecentStop = Date.now();
       try {
-        // Restore reserve: Phase 3 = 100%, Phase 1 = chargeTargetPct, Day charging = 100%, else 0%
         const reserveToRestore = state.phase === 3 ? 100
           : state.phase === 1 ? phase1Reserve
           : state.dayCharging ? 100
           : 0;
         await setMode(access, apiBase, siteId, 'autonomous', reserveToRestore);
         state.carSyncActive = false;
+
         if (state.carSyncPausedExport) {
           state.carSyncPausedExport = false;
-          if (state.phase === 2 || state.dayExporting) {
+
+          if (state.phase === 2) {
+            // Viability check before resuming Phase 2 export
+            const londonNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/London' }));
+            const nowMins = londonNow.getHours() * 60 + londonNow.getMinutes();
+            const endMins = (arbSettings.endHour || 5) * 60 + (arbSettings.endMinute || 30);
+            const minsLeft = endMins >= nowMins ? endMins - nowMins : (24 * 60 - nowMins + endMins);
+            const currentPct = state.stats.phase2LastPct || 50;
+            const exportMinsNeeded = Math.ceil((currentPct / 100 * 13.5) / 5.0 * 60);
+            if (minsLeft >= exportMinsNeeded + 60) {
+              try { await setExport(access, apiBase, siteId, true); } catch(e) {}
+              log(state, 'Car sync: car stopped — ' + minsLeft + ' min left, resuming Phase 2 export from ' + currentPct + '%');
+              await sendPush(store, deviceId, 'Car finished charging', 'Export resumed · ' + minsLeft + ' min remaining');
+            } else {
+              state.phase = 3;
+              state.stats.phase3StartPct = currentPct;
+              await setMode(access, apiBase, siteId, 'autonomous', 100);
+              log(state, 'Car sync: car stopped — only ' + minsLeft + ' min left, not enough to export + recharge — skipping to Phase 3');
+              await sendPush(store, deviceId, 'Car finished charging', 'Not enough time to export before ' + fmt2(arbSettings.endHour || 5) + ':' + fmt2(arbSettings.endMinute || 30) + ' — recharging now');
+            }
+          } else if (state.dayExporting) {
             try { await setExport(access, apiBase, siteId, true); } catch(e) {}
-            log(state, 'Car sync: car stopped — reserve reset, export resumed');
+            log(state, 'Car sync: car stopped — Day export resumed');
             await sendPush(store, deviceId, 'Car finished charging', 'Export resumed');
-          } else if (state.phase === 3) {
-            log(state, 'Car sync: car stopped — Phase 3 active, reserve kept at 100%');
-            await sendPush(store, deviceId, 'Car finished charging', 'Battery recharge continuing');
-          } else if (state.dayCharging) {
-            log(state, 'Car sync: car stopped — Day charge active, reserve kept at 100%');
-            await sendPush(store, deviceId, 'Car finished charging', 'Battery continuing to charge for export');
           } else {
             log(state, 'Car sync: car stopped — reserve reset to 0%');
           }
+
         } else if (state.phase === 3) {
           log(state, 'Car sync: car stopped — Phase 3 active, reserve kept at 100%');
           await sendPush(store, deviceId, 'Car finished charging', 'Battery recharge continuing');
@@ -569,6 +612,7 @@ async function runCarSync(state, store, tokenData, settings, deviceId, phase1Res
           await sendPush(store, deviceId, 'Car finished charging', 'Battery continuing to charge for export');
         } else {
           log(state, 'Car sync: car stopped — reserve reset to 0%');
+          await sendPush(store, deviceId, 'Car finished charging', 'Normal mode restored');
         }
       } catch(e) { log(state, 'Car sync stop error: ' + e.message); }
     }
@@ -743,6 +787,8 @@ async function processUser(store, deviceId) {
           state.stats.rateSum = rate;
           state.stats.rateSamples = rate > 0 ? 1 : 0;
           state.stats.rate = rate;
+          state.stats.phase2LastPct = pct;
+          state.stats.phase2LastPctTime = Date.now();
           await setMode(access, apiBase, siteId, 'autonomous', 0);
           await setExport(access, apiBase, siteId, true);
           log(state, 'Phase 2: Export enabled' + (rate > 0 ? ' at ' + rate.toFixed(1) + 'p/kWh' : ' (rate unavailable — will retry)'));
@@ -767,7 +813,38 @@ async function processUser(store, deviceId) {
         state.stats.rateSamples = (state.stats.rateSamples || 0) + 1;
         state.stats.rate = parseFloat((state.stats.rateSum / state.stats.rateSamples).toFixed(2));
       }
-      if (m % 10 === 0) log(state, 'Phase 2 exporting — battery at ' + pct + '%' + (state.stats.rate > 0 ? ' @ ' + state.stats.rate.toFixed(1) + 'p avg' : ''));
+      // Stuck detection: if battery has risen by >5% over the last 20 min, something
+      // has overridden export mode — re-establish it
+      const lastPct = state.stats.phase2LastPct;
+      const lastPctTime = state.stats.phase2LastPctTime;
+      if (lastPct !== undefined && lastPctTime && (Date.now() - lastPctTime) > 20 * 60 * 1000) {
+        if (pct > lastPct + 5) {
+          log(state, 'Phase 2: battery rising (' + lastPct + '%→' + pct + '%) — re-establishing export mode');
+          await sendPush(store, deviceId, 'Phase 2 override detected', 'Re-establishing export — battery was rising');
+          try { await setMode(access, apiBase, siteId, 'autonomous', 0); await setExport(access, apiBase, siteId, true); } catch(e) {}
+        }
+        state.stats.phase2LastPct = pct;
+        state.stats.phase2LastPctTime = Date.now();
+      } else if (!lastPctTime) {
+        state.stats.phase2LastPct = pct;
+        state.stats.phase2LastPctTime = Date.now();
+      }
+      if (m % 10 === 0) {
+        log(state, 'Phase 2 exporting — battery at ' + pct + '%' + (state.stats.rate > 0 ? ' @ ' + state.stats.rate.toFixed(1) + 'p avg' : ''));
+        // Mid-cycle viability check: if not enough time to finish export AND get ≥60 min recharge, skip to Phase 3
+        const endTotalMins2 = endHour * 60 + endMinute;
+        const nowTotalMins2 = h * 60 + m;
+        const minsLeft = endTotalMins2 >= nowTotalMins2 ? endTotalMins2 - nowTotalMins2 : (24 * 60 - nowTotalMins2 + endTotalMins2);
+        const exportMinsNeeded = Math.ceil((pct / 100 * 13.5) / 5.0 * 60);
+        if (minsLeft < exportMinsNeeded + 60) {
+          log(state, 'Phase 2: not enough time (battery ' + pct + '%, ' + minsLeft + ' min left, need ' + (exportMinsNeeded + 60) + ') — skipping to Phase 3');
+          state.phase = 3;
+          state.stats.phase3StartPct = pct;
+          await setExport(access, apiBase, siteId, false);
+          await setMode(access, apiBase, siteId, 'autonomous', 100);
+          await sendPush(store, deviceId, 'Export shortened — recharging', 'Not enough time to fully export · Recharging now');
+        }
+      }
       if (pct <= 2) {
         log(state, 'Phase 2 complete — battery at ' + pct + '%');
         const startPct = state.stats.phase2StartPct || chargeTargetPct;
@@ -779,6 +856,8 @@ async function processUser(store, deviceId) {
         log(state, 'Est. £' + earned.toFixed(2) + ' earned (' + kwhExported + ' kWh @ ' + avgRate.toFixed(1) + 'p avg)');
         state.phase = 3;
         state.stats.phase3StartPct = pct;
+        state.midPhase2CarStopSent = false;
+        state.midPhase2CarCheckTime = null;
         await setExport(access, apiBase, siteId, false);
         await setMode(access, apiBase, siteId, 'autonomous', 100);
         log(state, 'Phase 3: Export off — reserve set to 100%, recharging from grid');
@@ -867,7 +946,7 @@ async function processUser(store, deviceId) {
   // drawing power simultaneously can exceed the grid import limit, causing the Powerwall
   // to discharge its own battery to supply the car load, creating an oscillation
   if (carSyncEnabled && state.phase !== 1) {
-    try { await runCarSync(state, store, tokenData, carSyncSettings, deviceId, chargeTargetPct); }
+    try { await runCarSync(state, store, tokenData, carSyncSettings, deviceId, chargeTargetPct, s); }
     catch (e) { log(state, 'Car sync error: ' + e.message); }
   }
 
