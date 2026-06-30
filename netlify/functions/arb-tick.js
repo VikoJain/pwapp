@@ -1,39 +1,152 @@
-const https = require('https');
-const crypto = require('crypto');
+Virtual Assistant (2026/06/29 08:01:59): Hello Seema, I'm DVLA's Virtual Assistant.
 
-const DEFAULT_STATE = { phase: 0, enabled: false, log: [], stats: { kwh: 0, rate: 0, earned: 0 } };
-const DEFAULT_SETTINGS = { chargeTargetPct: 50, startHour: 23, startMinute: 30, endHour: 5, endMinute: 30 };
+Virtual Assistant (2026/06/29 08:02:00): If you're here during opening hours and I'm unable to help, one of our advisors can step in.
 
-function makeRequest(options, postData) {
-  return new Promise((resolve, reject) => {
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve({ statusCode: res.statusCode, body: data }));
-    });
-    req.on('error', reject);
-    if (postData) req.write(postData);
-    req.end();
-  });
-}
+How can I help you today? In a few key words, please outline your enquiry.
 
-function signCommand(body) {
-  const pem = process.env.TESLA_PRIVATE_KEY;
-  if (!pem) return null;
-  try {
-    const privateKey = crypto.createPrivateKey(pem);
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const nonce = crypto.randomBytes(16).toString('hex');
-    const bodyStr = body ? JSON.stringify(body) : '';
-    const sign = crypto.createSign('SHA256');
-    sign.update(timestamp + nonce + bodyStr);
-    return { timestamp, nonce, signature: sign.sign(privateKey, 'base64') };
-  } catch (e) { return null; }
-}
+Virtual Assistant (2026/06/29 08:02:00): To restart our conversation at any point, type 'Restart'.
 
-async function teslaGet(token, apiBase, path) {
-  const url = new URL(apiBase + path);
-  const res = await makeRequest({
+You (2026/06/29 08:02:24): Hi, I transfered a new number plate to my car on Saturday but forgot to retain my old one
+
+Virtual Assistant (2026/06/29 08:02:25): Only the registered keeper has the entitlement to apply to transfer a registration number, they can apply online or by post and there is an £80 fee applicable.
+
+Both vehicles must be taxed or on a SORN before the application is submitted.
+
+Virtual Assistant (2026/06/29 08:02:25): The quickest way to transfer the registration number is to use our online services which are available:
+
+Monday to Friday, 7am to 9pm 
+Saturday & Sunday, 7am to 8pm
+
+Firstly, retain the registration here:
+
+Virtual Assistant (2026/06/29 08:02:25): https://gov.uk/personalised-vehicle-registration-numbers/take-private-number-off
+
+Virtual Assistant (2026/06/29 08:02:26): Once it's been retained, it can be assigned immediately to another vehicle here:
+
+Virtual Assistant (2026/06/29 08:02:26): http://gov.uk/put-registration-number-vehicle
+
+Virtual Assistant (2026/06/29 08:02:26): Criteria to use the services can be found online. 
+
+If the vehicle doesn't meet the criteria a postal application can be made.
+
+Virtual Assistant (2026/06/29 08:02:26): Has this answered your enquiry? Please click one of the following options:
+
+You (2026/06/29 08:02:32): no
+
+Virtual Assistant (2026/06/29 08:02:32): I'm sorry, I don't understand that. For me to help you, please rephrase your enquiry, or click an option when presented with a menu.
+
+Alternatively, if you would like to restart our conversation, please type 'Restart'.
+
+You (2026/06/29 08:02:57): THe web version doesn't work
+
+Virtual Assistant (2026/06/29 08:02:57): I'm sorry, I still don't understand that. For me to help you, please rephrase your enquiry, or click an option when presented with a menu.
+
+Alternatively, if you would like to restart our conversation, please type 'Restart'.
+
+You (2026/06/29 08:03:01): help
+
+Virtual Assistant (2026/06/29 08:03:02): Please confirm if your enquiry is relating to a vehicle or a driving licence by clicking one of the following options:
+
+You (2026/06/29 08:03:06): Vehicle enquiry
+
+Virtual Assistant (2026/06/29 08:03:07): Would you like to be transferred to an advisor to assist you further?
+
+Virtual Assistant (2026/06/29 08:03:07): Please click one of the following options:
+
+You (2026/06/29 08:03:10): Yes
+
+Virtual Assistant (2026/06/29 08:03:11): For one of our advisors to assist you further, please outline the nature of your enquiry.
+
+I can pass this information on for them to assist you.
+
+You (2026/06/29 08:03:16): thanks
+
+Virtual Assistant (2026/06/29 08:03:16): Chat Summary:
+
+Enquiry: thanks
+
+Virtual Assistant (2026/06/29 08:03:19): Please be respectful when speaking to our advisors. 
+
+We will not tolerate abusive, threatening or offensive language. If this occurs, the chat may be ended immediately.
+
+Virtual Assistant (2026/06/29 08:03:19): You have been added to a queue. Please be patient with us during busy periods, where your wait might be longer than usual, but please rest assured an advisor will answer you as soon as possible.
+Please note: this screen will not update whilst you are waiting in the queue and you will not receive any further messages until you have connected to an advisor.
+
+Agent (2026/06/29 08:03:22): Hello, you're through to Leah, please give me a moment while I read through the chat details.
+
+You (2026/06/29 08:03:59): Hi, I transfered a new number plate to my car on Saturday but forgot to retain my old cherrished number plate. 
+
+Agent (2026/06/29 08:04:38): In order for me to assist you further, can you please confirm:
+- The registration number currently displayed on the vehicle
+- The make, model and colour of the vehicle
+- Your full name and address, including postcode
+- Your date of birth
+
+You (2026/06/29 08:04:39): I thought I would have an option to retain it when doing that but I I didn't
+
+Agent (2026/06/29 08:06:07): In order for me to assist you further, can you please confirm:
+- The registration number currently displayed on the vehicle
+- The make, model and colour of the vehicle
+- Your full name and address, including postcode
+- Your date of birth
+
+You (2026/06/29 08:08:37): The new plate is 3 DOL, Audi A1, sport TFSI, Blue
+66 Daylesford Road, B928EP
+5th April 1972
+
+You (2026/06/29 08:08:50): Seema Jain
+
+You (2026/06/29 08:09:11): The old plate was 11 DOL which is what I wanted to retain
+
+Agent (2026/06/29 08:10:03): Please give me a moment while I look into this for you.
+
+You (2026/06/29 08:10:16): thank you
+
+Agent (2026/06/29 08:10:44): I am sorry but the original private registration number should have been retained before the new private number was assigned. As the application has been processed, I’m afraid we can't reverse this. If you wanted to keep the previous plate that was on your vehicle, you’ll need to follow these steps:
+
+- Wait for the updated V5C with your new private registration number on.
+- Once you’ve received this, apply online to retain this registration number. This will cost £80 and will re-assign your previous private registration back to the vehicle. A new V5C will be issued. You will also be sent a V778 retention certificate for the private registration number.
+- When this V5C arrives, go online again and apply to retain this registration number. This will cost £80 and an age related registration number will be assigned to the vehicle. A new V5C and V778 will be issued.
+- Finally, when you’ve received this V5C, you can then go online and apply to assign your desired registration number. You’ll also require the latest V778 for this.
+
+Please note, when there is an online transaction the V5C’s and V778 retention certificates should arrive within 5 - 10 working days.
+
+Agent (2026/06/29 08:10:48): I am about to send you a link. When you click on the link this may open on top of this chat window, hiding it from view. You can minimise your browser window to continue with this chat.
+
+Agent (2026/06/29 08:10:53): You can retain your registration number at https://www.gov.uk/personalised-vehicle-registration-numbers/take-private-number-off
+
+You (2026/06/29 08:11:55): ok, sorry about that. So I haven't lost it? I was worried I had.
+
+Agent (2026/06/29 08:12:12): No, you would still be able to follow the process to retain the plate
+
+You (2026/06/29 08:15:37): So, just to be clear, wait for the my new V5C doc, then retain the plate 3 DOL, then wait for the old plate to get put back on '11 DOL' via the new V5C document then put that on retention then put the new plate on? 
+
+Agent (2026/06/29 08:17:15): Yes, that is correct, You will need to update your insurance company and the plate on the vehicle, if you are continuing to use the vehicle.
+
+You (2026/06/29 08:19:13): OK, what a faff. Once I get my V5c for 3 DOL, can I run the retention and transfer instantly I will I have to wait weeks to process everyone? I.e. will I need to end up having to put my old plates on for a few weeks while I wait or can I do this instantly? 
+
+Agent (2026/06/29 08:20:39): You will need to retain 11DOL and then put the plate 3DOL back on the vehicle whilst you wait for the V5c, Then retain 3DOL and put the age related plate on the vehicle and wait for the V5c, then assign 11DOL back to the vehicle.
+
+You (2026/06/29 08:21:38): OK, so I will need to then put my old plates back on for a while in order to retain the original cherrished plate
+
+Agent (2026/06/29 08:21:46): Yes, that is correct
+
+Agent (2026/06/29 08:24:32): Do you still require my assistance?
+
+You (2026/06/29 08:25:13): OK, as long as I haven't lost my old cherished plate. I am less stressed, thank you! I just thought I would be asked to transfer that off during the process of adding the new plate
+
+Agent (2026/06/29 08:25:27): Is there anything else I can help you with today?
+
+You (2026/06/29 08:26:09): no
+
+Agent (2026/06/29 08:26:14): Thank you for your enquiry, have a lovely day.
+ 
+Goodbye.
+ 
+You can save this chat at any time by clicking the save button in the top left-hand corner of the chat. On some devices this option will only appear when the chat has ended.
+ 
+Shortly after this chat ends, you will be asked to complete a short survey regarding your experience today. Please take the time to fill this in to help us better our services.
+
     hostname: url.hostname, path: url.pathname, method: 'GET',
     headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
   }, null);
