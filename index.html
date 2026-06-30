@@ -264,6 +264,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         </div>
       </div>
 
+      <div id="strategy-strip" style="display:none;background:#f2f2f7;border-radius:11px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#3c3c43;line-height:1.6"></div>
+
       <div class="card" id="activity-card">
         <div class="section-hd" style="margin-bottom:8px">
           <span class="card-title" style="margin-bottom:0">Activity</span>
@@ -778,12 +780,12 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 
       <div class="card">
         <div class="card-title">Health tab</div>
-        <div class="guide-intro">Shows the long-term condition of your Powerwall based on Tesla's diagnostics data.</div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Capacity retained</strong> — your battery's current usable capacity as a percentage of its original 13.5 kWh. A new Powerwall typically shows 95–100%.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Cycle count</strong> — total full charge/discharge cycles completed. Tesla rates the Powerwall for around 3,000 cycles before significant degradation.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Est. remaining life</strong> — a rough guide based on current cycle count and degradation rate. Not a precise forecast.</div></div>
+        <div class="guide-intro">Shows the condition of your Powerwall. Tap Refresh to load the latest data — it does not update automatically.</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Capacity retained</strong> — your battery's current usable capacity as a percentage of its original 13.5 kWh. Comes directly from Tesla. A new Powerwall typically shows 95–100%.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Cycle count</strong> — an estimate based on capacity degradation, not actual Tesla data (Tesla's API does not expose cycle count). A new battery at 100% capacity will show 0 est. — this is expected.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Est. remaining life</strong> — a rough estimate based on how far capacity has degraded. Not a precise forecast.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>System age</strong> — not available from Tesla's API. Shows — always.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Temperature</strong> — battery operating temperature. Above 35°C or below 0°C reduces performance. Normal indoor installations stay well within range year-round.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Capacity over time chart</strong> — shows how usable capacity has changed. Fills in as more health data is collected.</div></div>
       </div>
 
       <div class="card">
@@ -831,8 +833,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         <div class="guide-section-lbl">Octopus car sync</div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Sync battery with car</strong> — detects whenever your car is charging (for example on an Octopus Go or Intelligent Octopus schedule) and charges the Powerwall at the same time, using the same cheap rate window.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Car sync pauses during Phase 1</strong> — while the battery is charging in Phase 1, car sync is suspended. This prevents the car's large load from competing with battery charging and causing the Powerwall to discharge to supply the car.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Export first</strong> — if the car starts charging while the Powerwall is exporting, the export continues uninterrupted. The Powerwall syncs with the car only outside of active export phases.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Car first</strong> — if the car starts charging while the Powerwall is exporting, the export is paused and the Powerwall charges alongside the car. Export resumes automatically when the car finishes.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Export first</strong> — if the car starts charging while the Powerwall is exporting, the export continues uninterrupted. If car control is enabled, the app will also send a charge stop to the car — both at Phase 2 start and if the car starts a new charging session mid-export.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Car first</strong> — if the car starts charging while the Powerwall is exporting, the export is paused and the Powerwall charges alongside the car at the cheap overnight rate. When the car finishes, the app checks whether there is enough time remaining to complete the export and recharge before the end time. If there is, export resumes. If not, it skips straight to Phase 3 to maximise recharge time.</div></div>
       </div>
 
       <div class="card">
@@ -872,7 +874,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Overnight cycle didn't start</strong> — check the toggle on the Night tab is on and that the start time has passed. The server runs once per minute so there can be up to a 1-minute delay.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Car control not working</strong> — tap Find car in Night settings. If still not found, go to <strong>accounts.tesla.com → Connected apps → Powerwall Manager</strong> and tick vehicle permissions, then reconnect Tesla.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Octopus rates not loading</strong> — check your API key and account number in Settings → Octopus Energy. The key should start with <span class="guide-code">sk_live_</span></div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Cycle appears stuck in a phase</strong> — check the battery % on the Home tab. Phase 2 ends when the battery reaches around 0%; Phase 3 ends when it reaches around 98%.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Cycle appears stuck in a phase</strong> — check the battery % on the Home tab. Phase 2 ends when the battery reaches around 0%; Phase 3 ends when it reaches around 98%. The app also checks every 10 minutes during Phase 2 — if there is not enough time to finish exporting and recharge before the end time, it will skip to Phase 3 automatically.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Day mode shows no activity or no slots</strong> — check the Night tab. If the overnight cycle is still showing an active phase (e.g. Phase 1 or Phase 2), Day mode will not run until it completes or is reset. Toggle Night mode off and back on to clear a stuck phase, then toggle Day mode off and on to force a fresh strategy calculation.</div></div>
         <div style="margin-top:12px;font-size:13px;color:#8e8e93">For anything else, contact <a href="mailto:thebigfatstar@gmail.com" style="color:#007aff">thebigfatstar@gmail.com</a></div>
       </div>
 
@@ -1788,6 +1791,7 @@ async function pollServerStatus() {
     renderArbUI();
     renderDayUI(data);
     renderCarSyncUI(data);
+    renderStrategyStrip(data);
     renderActivityLog(data.log);
   } catch(e) {}
 }
@@ -1891,6 +1895,47 @@ function renderArbUI() {
 }
 
 function fmt2(n) { return String(n).padStart(2, '0'); }
+
+function renderStrategyStrip(data) {
+  const el = document.getElementById('strategy-strip');
+  if (!el) return;
+  const parts = [];
+
+  // Night
+  const phase = data.phase || 0;
+  const nightOn = !!data.enabled;
+  if (nightOn || phase > 0) {
+    const dot = phase === 2 ? '🟢' : phase === 1 || phase === 3 ? '🟡' : phase === 4 ? '⚪' : '⚪';
+    if (phase === 1) parts.push(dot + ' Night: charging battery');
+    else if (phase === 2) parts.push(dot + ' Night: exporting' + (data.stats?.rate > 0 ? ' at ' + data.stats.rate.toFixed(1) + 'p' : ''));
+    else if (phase === 3) parts.push(dot + ' Night: recharging');
+    else if (phase === 4) parts.push(dot + ' Night: standby');
+    else parts.push('⚪ Night: scheduled');
+  }
+
+  // Day
+  const dayOn = !!data.dayEnabled;
+  if (dayOn) {
+    const slots = data.dayExportSlots || [];
+    const futureSell = slots.filter(s => { const [h2,m2]=s.time.split(':').map(Number); return h2*60+m2 > new Date().getHours()*60+new Date().getMinutes(); });
+    if (data.dayCharging) parts.push('🟡 Day: charging for export');
+    else if (data.dayExporting) parts.push('🟢 Day: exporting');
+    else if (futureSell.length > 0) parts.push('⚪ Day: ' + futureSell.length + ' slot' + (futureSell.length !== 1 ? 's' : '') + ' from ' + futureSell[0].time);
+    else parts.push('⚪ Day: no slots today');
+  }
+
+  // Car sync
+  const carOn = !!(data.carSyncSettings && data.carSyncSettings.enabled);
+  if (carOn) {
+    if (data.carSyncActive) parts.push('🟢 Car sync: syncing');
+    else if (data.carChargingSince) parts.push('🟡 Car sync: car detected');
+    else parts.push('⚪ Car sync: monitoring');
+  }
+
+  if (!parts.length) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.innerHTML = parts.join(' &nbsp;·&nbsp; ');
+}
 
 function populateArbSettings(settings) {
   if (!settings) return;
