@@ -56,8 +56,10 @@ exports.handler = async (event) => {
       if (body.action === 'toggle') {
         state.enabled = body.enabled;
         state.log = state.log || [];
-        const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-        state.log.unshift('[' + time + '] Arbitrage ' + (body.enabled ? 'enabled — server-side, starts at 23:30' : 'disabled by user'));
+        const _now = new Date();
+        const _date = _now.toLocaleDateString('en-GB', { timeZone: 'Europe/London', day: 'numeric', month: 'short' });
+        const _time = _now.toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
+        state.log.unshift('[' + _date + ' ' + _time + '] Arbitrage ' + (body.enabled ? 'enabled — server-side, starts at 23:30' : 'disabled by user'));
         // Do not reset phase here — arb-tick handles clean shutdown if disabled mid-cycle
         await store.set(k('state'), JSON.stringify(state));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
@@ -170,7 +172,10 @@ exports.handler = async (event) => {
 
       if (body.action === 'log_action') {
         const actionLog = JSON.parse(await store.get(k('action_log')) || '[]');
-        const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        const _n = new Date();
+        const _d = _n.toLocaleDateString('en-GB', { timeZone: 'Europe/London', day: 'numeric', month: 'short' });
+        const _t = _n.toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
+        const time = _d + ' ' + _t;
         actionLog.unshift({ ts: Date.now(), time, msg: body.msg });
         if (actionLog.length > 100) actionLog.length = 100;
         await store.set(k('action_log'), JSON.stringify(actionLog));
