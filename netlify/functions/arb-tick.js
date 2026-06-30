@@ -751,7 +751,14 @@ async function processUser(store, deviceId) {
       log(state, 'Arbitrage disabled mid-cycle — export stopped, normal mode restored');
       state.phase = 0;
     }
-    else if (state.phase === 0 && state.enabled && h === startHour && m >= startMinute) {
+    else if (state.phase === 0 && state.enabled && (() => {
+      const startMins = startHour * 60 + startMinute;
+      const endMins = endHour * 60 + endMinute;
+      const nowMins = h * 60 + m;
+      return startMins > endMins
+        ? (nowMins >= startMins || nowMins < endMins)
+        : (nowMins >= startMins && nowMins < endMins);
+    })()) {
       state.phase = 1;
       state.stats = { kwh: 0, rate: 0, earned: 0, phase2StartPct: 0, phase1StartPct: pct, offPeakRate: null, importCost: 0, profit: 0 };
       log(state, '=== Arbitrage cycle started ===');
