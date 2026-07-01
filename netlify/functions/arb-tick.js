@@ -761,6 +761,8 @@ async function processUser(store, deviceId) {
     })()) {
       state.phase = 1;
       state.stats = { kwh: 0, rate: 0, earned: 0, phase2StartPct: 0, phase1StartPct: pct, offPeakRate: null, importCost: 0, profit: 0 };
+      state.phase1CarStopSent = false;
+      state.phase1CarCheckTime = null;
       log(state, '=== Arbitrage cycle started ===');
       await setMode(access, apiBase, siteId, 'autonomous', chargeTargetPct);
       log(state, 'Phase 1: Reserve set to ' + chargeTargetPct + '% — charging from grid');
@@ -770,6 +772,27 @@ async function processUser(store, deviceId) {
     }
     else if (state.phase === 1) {
       if (m % 10 === 0) log(state, 'Phase 1 charging — battery at ' + pct + '%');
+      // Stop car charging during Phase 1 if car control is enabled — prevents car competing for grid import
+      if (s.carControlEnabled && tokenData.vehicleId && !state.phase1CarStopSent) {
+        const now1 = Date.now();
+        if (!state.phase1CarCheckTime || (now1 - state.phase1CarCheckTime) > 2 * 60 * 1000) {
+          state.phase1CarCheckTime = now1;
+          try {
+            const vState = await getVehicleState(access, apiBase, tokenData.vehicleId);
+            if (vState === 'online') {
+              const cs = await getVehicleChargeState(access, apiBase, tokenData.vehicleId);
+              if (cs === 'Charging') {
+                await wakeVehicle(access, apiBase, tokenData.vehicleId);
+                const limit = s.carChargeLimitPhase2 || 50;
+                await store.set('pending_vehicle_cmd_' + deviceId, JSON.stringify({ cmd: 'charge_stop', chargeLimit: limit, requestedAt: Date.now() }));
+                state.phase1CarStopSent = true;
+                log(state, 'Phase 1: car detected charging — sending charge stop to protect grid import');
+                await sendPush(store, deviceId, 'Car charging paused', 'Stopped car charging during battery charge phase');
+              }
+            }
+          } catch(e) {}
+        }
+      }
       if (pct >= chargeTargetPct) {
         log(state, 'Phase 1 complete — battery reached ' + pct + '%');
         const endTotalMins = endHour * 60 + endMinute;
