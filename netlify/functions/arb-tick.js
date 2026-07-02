@@ -770,8 +770,7 @@ async function processUser(store, deviceId) {
       await setMode(access, apiBase, siteId, 'autonomous', chargeTargetPct);
       log(state, 'Phase 1: Reserve set to ' + chargeTargetPct + '% — charging from grid');
       await sendPush(store, deviceId, 'Overnight cycle started', 'Charging battery to ' + chargeTargetPct + '%');
-      // Fetch off-peak rate for import cost tracking (non-blocking — stored for later calculation)
-      getGoOffPeakRate(store, deviceId).then(r => { if (r) state.stats.offPeakRate = r; }).catch(() => {});
+      try { const r = await getGoOffPeakRate(store, deviceId); if (r) state.stats.offPeakRate = r; } catch(e) {}
     }
     else if (state.phase === 1) {
       if (m % 10 === 0) log(state, 'Phase 1 charging — battery at ' + pct + '%');
