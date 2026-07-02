@@ -321,9 +321,11 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       state.dayEstimatedImportCost = dayEstimatedImportCost;
       state.dayEstimatedProfit = parseFloat((dayEstimatedRevenue - dayEstimatedImportCost).toFixed(2));
       const sellCount = sellWindow.length, arbCount = arbWindow.length;
+      const floorLabel = ds.awayMode === false && ds.manualFloorPct !== undefined ? 'manual floor ' + planFloorPct + '%' : 'adaptive floor';
       log(state, 'Day: strategy — ' + (sellCount ? sellCount + ' sell' : '') + (sellCount && arbCount ? ' + ' : '') + (arbCount ? arbCount + ' arb' : '') + ' slot(s)' +
         (dayNeedsCharge && dayChargeSlot ? ', charge ' + dayChargeSlot.startTime + '→' + dayChargeSlot.endTime : '') +
-        (importRate ? ' · import ' + importRate.toFixed(1) + 'p' : ' · no import tariff'));
+        (importRate ? ' · import ' + importRate.toFixed(1) + 'p' : ' · no import tariff') +
+        ' · ' + floorLabel);
     }
   }
 
@@ -472,7 +474,8 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
           state.dayStats.avgRate = parseFloat((state.dayStats.rateSum / state.dayStats.rateSamples).toFixed(1));
         }
         state.dayExportStart = null;
-        const reason = pctInt <= reserveFloorPct ? 'reserve floor (' + pctInt + '% ≤ ' + reserveFloorPct + '%)' : 'slot ended';
+        const floorMode = ds.awayMode === false && ds.manualFloorPct !== undefined ? 'manual' : 'adaptive';
+        const reason = pctInt <= reserveFloorPct ? 'reserve floor (' + pctInt + '% ≤ ' + reserveFloorPct + '% ' + floorMode + ')' : 'slot ended';
         log(state, 'Day: export off — ' + reason + ' · ~' + netExportedKwh + ' kWh · £' + periodEarned);
         await sendPush(store, deviceId, 'Day export ended', '~' + netExportedKwh + ' kWh · Est. £' + periodEarned);
       }
@@ -997,4 +1000,3 @@ exports.handler = async () => {
   } catch (e) {}
   return { statusCode: 200, body: 'OK' };
 };
- 
