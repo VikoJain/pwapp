@@ -231,6 +231,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       getImportDayRate(store, deviceId)
     ]);
     state.dayImportRate = importRate;
+    if (!importRate) log(state, 'Day: import rate unavailable — day costs will not be tracked. Check Settings and press Re-detect tariff.');
     const EFFICIENCY = 0.9;
     const SLOT_KWH = 2.5; // 5kW × 0.5hr
     const CHARGE_RATE_KW = 3.68;
@@ -770,10 +771,10 @@ async function processUser(store, deviceId) {
       await setMode(access, apiBase, siteId, 'autonomous', chargeTargetPct);
       log(state, 'Phase 1: Reserve set to ' + chargeTargetPct + '% — charging from grid');
       await sendPush(store, deviceId, 'Overnight cycle started', 'Charging battery to ' + chargeTargetPct + '%');
-      try { const r = await getGoOffPeakRate(store, deviceId); if (r) state.stats.offPeakRate = r; } catch(e) {}
+      try { const r = await getGoOffPeakRate(store, deviceId); if (r) { state.stats.offPeakRate = r; } else { log(state, 'Note: import rate unavailable — night costs will not be tracked. Check Settings and press Re-detect tariff.'); } } catch(e) { log(state, 'Note: import rate fetch error — night costs will not be tracked'); }
     }
     else if (state.phase === 1) {
-      if (m % 10 === 0) log(state, 'Phase 1 charging — battery at ' + pct + '%');
+      if (m % 30 === 0) log(state, 'Phase 1 charging — battery at ' + pct + '%');
       // Stop car charging during Phase 1 if car control is enabled — prevents car competing for grid import
       if (s.carControlEnabled && tokenData.vehicleId && !state.phase1CarStopSent) {
         const now1 = Date.now();
@@ -863,8 +864,8 @@ async function processUser(store, deviceId) {
         state.stats.phase2LastPct = pct;
         state.stats.phase2LastPctTime = Date.now();
       }
+      if (m % 30 === 0) log(state, 'Phase 2 exporting — battery at ' + pct + '%' + (state.stats.rate > 0 ? ' @ ' + state.stats.rate.toFixed(1) + 'p avg' : ''));
       if (m % 10 === 0) {
-        log(state, 'Phase 2 exporting — battery at ' + pct + '%' + (state.stats.rate > 0 ? ' @ ' + state.stats.rate.toFixed(1) + 'p avg' : ''));
         // Mid-cycle viability check: if not enough time to finish export AND get ≥60 min recharge, skip to Phase 3
         const endTotalMins2 = endHour * 60 + endMinute;
         const nowTotalMins2 = h * 60 + m;
@@ -921,7 +922,7 @@ async function processUser(store, deviceId) {
         await setExport(access, apiBase, siteId, false);
         await setMode(access, apiBase, siteId, 'autonomous', 0);
       } else {
-        if (m % 10 === 0) log(state, 'Phase 3 recharging — battery at ' + pct + '%');
+        if (m % 30 === 0) log(state, 'Phase 3 recharging — battery at ' + pct + '%');
         if (pct >= 98) {
           log(state, 'Phase 3 complete — battery at ' + pct + '%');
           state.phase = 4;
@@ -944,7 +945,7 @@ async function processUser(store, deviceId) {
       await sendPush(store, deviceId, 'Overnight cycle complete', 'Normal operation restored · Check Night tab for earnings');
     }
     else if (state.phase === 4) {
-      if (m % 10 === 0) log(state, 'Phase 4: standby — battery at ' + pct + '%, waiting until ' + fmt2(endHour) + ':' + fmt2(endMinute));
+      if (m % 30 === 0) log(state, 'Phase 4: standby — battery at ' + pct + '%, waiting until ' + fmt2(endHour) + ':' + fmt2(endMinute));
     }
     else if (state.phase > 0 && h >= endHour + 1) {
       log(state, 'Safety fallback at ' + fmt2(h) + ':' + fmt2(m) + ' — restoring normal mode');
