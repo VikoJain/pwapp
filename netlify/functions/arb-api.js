@@ -66,13 +66,14 @@ exports.handler = async (event) => {
       }
 
       if (body.action === 'save_settings') {
+        const existing = JSON.parse(await store.get(k('oct_settings')) || 'null') || {};
         await store.set(k('oct_settings'), JSON.stringify({
           octKey: body.octKey,
           octTariff: body.octTariff,
           octProduct: body.octProduct,
           octAccount: body.octAccount,
-          octImportTariff: body.octImportTariff || null,
-          octImportProduct: body.octImportProduct || null
+          octImportTariff: body.octImportTariff || existing.octImportTariff || null,
+          octImportProduct: body.octImportProduct || existing.octImportProduct || null
         }));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
