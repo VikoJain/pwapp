@@ -767,6 +767,9 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Timed export</strong> — manually export for a fixed number of minutes. Useful when you spot a high rate on the Tariff tab. The server stops it automatically even if your phone locks.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Export to target %</strong> — discharges to a specific battery percentage then stops automatically. Good for precise manual control.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Battery reserve</strong> — sets Tesla's minimum backup level. At 0% the full battery is available for export. The overnight cycle manages this automatically — only adjust manually if needed.</div></div>
+        <div class="guide-section-lbl">Activity log</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>What it shows</strong> — a timestamped record of every key event from Day and Night modes: charge starts and stops, export on and off, car charging paused or resumed, earnings summaries, and any warnings. Colour coded: <span style="color:#007aff;font-weight:600">blue</span> = Night cycle phases, <span style="color:#34c759;font-weight:600">green</span> = car events, <span style="color:#ff9500;font-weight:600">amber</span> = Day mode events, <span style="color:#ff3b30;font-weight:600">red</span> = safety overrides.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Show more</strong> — the log shows the last 5 entries by default. Tap <em>Show more</em> to expand to the full 50-entry history. Use this in the morning to confirm the overnight cycle ran correctly.</div></div>
       </div>
 
       <div class="card">
@@ -1733,14 +1736,14 @@ function renderActivityLog(log) {
   if (!el) return;
   activityLogFull = Array.isArray(log) ? log : [];
   if (activityLogFull.length === 0) {
-    el.innerHTML = '<span style="color:#8e8e93">No activity yet — starts when overnight mode runs.</span>';
+    el.innerHTML = '<span style="color:#8e8e93">No activity yet — starts when Day or Night mode runs.</span>';
     btn.style.display = 'none';
     return;
   }
   const entries = activityLogExpanded ? activityLogFull : activityLogFull.slice(0, ACTIVITY_PREVIEW);
   el.innerHTML = entries.map(entry => {
-    const isPhase = /Phase [1-4]|cycle started|cycle complete|Arbitrage cycle/i.test(entry);
-    const isCar = /Car sync|car stopped|car detected/i.test(entry);
+    const isPhase = /Phase [1-4]|cycle started|cycle complete|Arbitrage cycle|Est\. £/i.test(entry);
+    const isCar = /Car sync|car stopped|car detected|Vehicle:/i.test(entry);
     const isHoliday = /Holiday:|Day:/i.test(entry);
     const isSafety = /Safety/i.test(entry);
     let colour = '#3c3c43';
@@ -2566,7 +2569,7 @@ function renderDayUI(data) {
   const netProfitEl = document.getElementById('day-net-profit');
   if (kwhEl) kwhEl.textContent = stats.kwh > 0 ? stats.kwh.toFixed(1) : '—';
   if (earnedEl) earnedEl.textContent = stats.earned > 0 ? '£' + stats.earned.toFixed(2) : '£—';
-  if (importCostEl) importCostEl.textContent = stats.importCost > 0 ? '£' + stats.importCost.toFixed(2) : '£—';
+  if (importCostEl) importCostEl.textContent = stats.importCost > 0 ? '£' + stats.importCost.toFixed(2) : stats.earned > 0 ? '£0.00' : '£—';
   if (netProfitEl) {
     const net = (stats.earned || 0) - (stats.importCost || 0);
     netProfitEl.textContent = stats.earned > 0 ? (net >= 0 ? '£' : '-£') + Math.abs(net).toFixed(2) : '£—';
