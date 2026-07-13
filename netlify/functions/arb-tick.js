@@ -956,8 +956,8 @@ async function processUser(store, deviceId) {
       }
     }
     else if (state.phase === 4 && (h > endHour || (h === endHour && m >= endMinute))) {
-      if (state.stats.offPeakRate) {
-        state.stats.importCost = parseFloat((state.stats.phase1ImportCost || 0).toFixed(2));
+      if (state.stats.offPeakRate && (state.stats.kwh || 0) > 0) {
+        state.stats.importCost = parseFloat((state.stats.kwh * state.stats.offPeakRate / 100).toFixed(2));
         state.stats.profit = parseFloat((state.stats.earned - state.stats.importCost).toFixed(2));
       }
       state.phase = 0;
