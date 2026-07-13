@@ -449,14 +449,23 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       await setMode(access, apiBase, siteId, 'autonomous', 0);
       await setExport(access, apiBase, siteId, true);
       state.dayExporting = true;
-      state.dayExportStart = { pct, time: now, rate };
+      // Tag the export with its slot type so cost can be attributed correctly on stop
+      const currentExportSlot = exportSlots.find(s => {
+        const [sh, sm] = s.time.split(':').map(Number);
+        const slotMins = sh * 60 + sm;
+        return minuteOfDay >= slotMins && minuteOfDay < slotMins + 30;
+      });
+      state.dayExportStart = { pct, time: now, rate, type: currentExportSlot ? currentExportSlot.type : 'sell' };
       log(state, 'Day: export on — ' + (rate > 0 ? rate.toFixed(1) + 'p' : 'rate unavailable') + ' (battery ' + pctInt + '%, floor ' + reserveFloorPct + '%)');
       await sendPush(store, deviceId, 'Day export started', (rate > 0 ? rate.toFixed(1) + 'p/kWh · ' : '') + 'Battery at ' + pctInt + '%');
     } catch(e) { log(state, 'Day: export start error: ' + e.message); }
   } else if (!shouldExport && state.dayExporting) {
     try {
       await setExport(access, apiBase, siteId, false);
-      await setMode(access, apiBase, siteId, 'autonomous', 0);
+      // Away mode: restore to reserve floor so the Powerwall protects the remaining battery
+      // for house loads until the stop time. At-home mode: no restriction (user is present).
+      const postExportReserve = ds.awayMode !== false ? reserveFloorPct : 0;
+      await setMode(access, apiBase, siteId, 'autonomous', postExportReserve);
       state.dayExporting = false;
       if (state.dayExportStart) {
         const durationHrs = (now - state.dayExportStart.time) / 3600000;
@@ -474,6 +483,15 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
           state.dayStats.rateSamples = (state.dayStats.rateSamples || 0) + 1;
           state.dayStats.avgRate = parseFloat((state.dayStats.rateSum / state.dayStats.rateSamples).toFixed(1));
         }
+        // Attribute cost for sell exports: the kWh came from the overnight charge at off-peak rate
+        if (netExportedKwh > 0 && (state.dayExportStart.type || 'sell') === 'sell') {
+          const sellChargeRate = state.stats && state.stats.offPeakRate ? state.stats.offPeakRate : 0;
+          if (sellChargeRate > 0) {
+            const sellCost = parseFloat((netExportedKwh * sellChargeRate / 100).toFixed(2));
+            state.dayStats.importCost = parseFloat(((state.dayStats.importCost || 0) + sellCost).toFixed(2));
+          }
+        }
+        // (Arb export cost was already added to dayStats.importCost when the charge phase ended)
         state.dayExportStart = null;
         const floorMode = ds.awayMode === false && ds.manualFloorPct !== undefined ? 'manual' : 'adaptive';
         const reason = pctInt <= reserveFloorPct ? 'reserve floor (' + pctInt + '% ≤ ' + reserveFloorPct + '% ' + floorMode + ')' : 'slot ended';
@@ -481,6 +499,15 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
         await sendPush(store, deviceId, 'Day export ended', '~' + netExportedKwh + ' kWh · Est. £' + periodEarned);
       }
     } catch(e) { log(state, 'Day: export stop error: ' + e.message); }
+  }
+
+  // Away mode: periodically refresh the Powerwall reserve to track the sliding adaptive floor.
+  // This prevents the battery draining below the floor for house loads between export slots.
+  if (ds.awayMode !== false && !state.dayExporting && !state.dayCharging && !shouldCharge) {
+    if (!state.dayLastReserveRefresh || (now - state.dayLastReserveRefresh) >= 5 * 60 * 1000) {
+      try { await setMode(access, apiBase, siteId, 'autonomous', reserveFloorPct); } catch(e) {}
+      state.dayLastReserveRefresh = now;
+    }
   }
 }
 
@@ -814,10 +841,9 @@ async function processUser(store, deviceId) {
           state.phase = 2;
           const rate = await getOctopusRate(store, deviceId);
           state.stats.phase2StartPct = pct;
-          // Phase 1 import cost: kWh charged × off-peak rate
-          if (state.stats.offPeakRate) {
-            const phase1Kwh = Math.max(0, (pct - (state.stats.phase1StartPct || 0)) / 100 * 13.5);
-            state.stats.phase1ImportCost = parseFloat((phase1Kwh * state.stats.offPeakRate / 100).toFixed(2));
+          // Retry off-peak rate fetch if it was unavailable at Phase 1 start
+          if (!state.stats.offPeakRate) {
+            try { const r = await getGoOffPeakRate(store, deviceId); if (r) { state.stats.offPeakRate = r; } } catch(e) {}
           }
           state.stats.rateSum = rate;
           state.stats.rateSamples = rate > 0 ? 1 : 0;
@@ -910,8 +936,8 @@ async function processUser(store, deviceId) {
     else if (state.phase === 3) {
       const phase3PastEnd = h > endHour || (h === endHour && m >= endMinute);
       if (phase3PastEnd) {
-        if (state.stats.offPeakRate) {
-          state.stats.importCost = parseFloat((state.stats.phase1ImportCost || 0).toFixed(2));
+        if (state.stats.offPeakRate && (state.stats.kwh || 0) > 0) {
+          state.stats.importCost = parseFloat((state.stats.kwh * state.stats.offPeakRate / 100).toFixed(2));
           state.stats.profit = parseFloat((state.stats.earned - state.stats.importCost).toFixed(2));
         }
         log(state, 'Phase 3 ended at ' + fmt2(endHour) + ':' + fmt2(endMinute) + ' — battery at ' + pct + '% — normal mode restored');
