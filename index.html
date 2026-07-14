@@ -1989,7 +1989,7 @@ async function pollServerStatus() {
 function startServerPoll() {
   if (serverPollTimer) clearInterval(serverPollTimer);
   pollServerStatus();
-  serverPollTimer = setInterval(pollServerStatus, 30000);
+  serverPollTimer = setInterval(pollServerStatus, 60000);
 }
 
 // ── Tariff schedule helpers ───────────────────────────────
@@ -3098,7 +3098,7 @@ function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
   // Fire immediately on start, then every 30 seconds
   autoRefreshLive();
-  autoRefreshTimer = setInterval(autoRefreshLive, 30000);
+  autoRefreshTimer = setInterval(autoRefreshLive, 60000);
 }
 
 async function autoRefreshLive() {
