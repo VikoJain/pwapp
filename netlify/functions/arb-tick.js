@@ -734,8 +734,15 @@ async function processUser(store, deviceId) {
 
   // Skip live_status when fully idle — saves Tesla API calls at scale
   const fullyIdle = !state.enabled && state.phase === 0 && !state.dayEnabled && !state.holidayEnabled && !carSyncEnabled && !hasPctExport && !pendingCmd;
+  // Also skip when Night mode is the only active thing and we're in the daytime idle window (06:00–22:00 London).
+  // The cycle doesn't start until ~23:30 so there is no value in polling every 2 min all afternoon.
+  const _ltStr = new Date().toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false });
+  const [_lth, _ltm] = _ltStr.split(':').map(Number);
+  const _ltMins = _lth * 60 + _ltm;
+  const nightOnlyWaiting = state.enabled && state.phase === 0 && !state.dayEnabled && !state.holidayEnabled && !carSyncEnabled && !hasPctExport && !pendingCmd
+    && (_ltMins >= 360 && _ltMins < 1320); // 06:00–22:00 London
   let currentPct = -1;
-  if (!fullyIdle) {
+  if (!fullyIdle && !nightOnlyWaiting) {
     try {
       const live = await teslaGet(tokenData.access, tokenData.apiBase, `/api/1/energy_sites/${tokenData.energySiteId}/live_status`);
       currentPct = Math.round(live.response?.percentage_charged ?? -1);
