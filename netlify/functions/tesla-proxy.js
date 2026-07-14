@@ -50,6 +50,15 @@ exports.handler = async (event) => {
     }
 
     const url = new URL(path);
+    const ALLOWED_HOSTS = [
+      'fleet-api.prd.eu.vn.cloud.tesla.com',
+      'fleet-api.prd.na.vn.cloud.tesla.com',
+      'fleet-auth.prd.vn.cloud.tesla.com',
+      'owner-api.teslamotors.com',
+    ];
+    if (!ALLOWED_HOSTS.includes(url.hostname)) {
+      return { statusCode: 403, headers: corsHeaders, body: JSON.stringify({ error: 'Host not permitted' }) };
+    }
     const isCommand = method === 'POST' && (
       path.includes('/operation') ||
       path.includes('/backup') ||
