@@ -54,7 +54,7 @@ exports.handler = async (event) => {
       const state = JSON.parse(await store.get(k('state')) || DEFAULT_STATE);
 
       if (body.action === 'toggle') {
-        state.enabled = body.enabled;
+        state.enabled = !!body.enabled;
         state.log = state.log || [];
         const _now = new Date();
         const _date = _now.toLocaleDateString('en-GB', { timeZone: 'Europe/London', day: 'numeric', month: 'short' });
@@ -73,18 +73,34 @@ exports.handler = async (event) => {
           octProduct: body.octProduct,
           octAccount: body.octAccount,
           octImportTariff: body.octImportTariff || existing.octImportTariff || null,
-          octImportProduct: body.octImportProduct || existing.octImportProduct || null
+          octImportProduct: body.octImportProduct || existing.octImportProduct || null,
+          offPeakStart: body.offPeakStart ?? existing.offPeakStart ?? null,
+          offPeakEnd: body.offPeakEnd ?? existing.offPeakEnd ?? null,
+          offPeakRate: body.offPeakRate ?? existing.offPeakRate ?? null
+        }));
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
+
+      if (body.action === 'save_tariff_window') {
+        const existing = JSON.parse(await store.get(k('oct_settings')) || 'null') || {};
+        await store.set(k('oct_settings'), JSON.stringify({
+          ...existing,
+          offPeakStart: body.offPeakStart ?? null,
+          offPeakEnd: body.offPeakEnd ?? null,
+          offPeakRate: body.offPeakRate ?? existing.offPeakRate ?? null
         }));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
 
       if (body.action === 'save_arb_settings') {
+        const _sh = parseInt(body.startHour), _sm = parseInt(body.startMinute);
+        const _eh = parseInt(body.endHour), _em = parseInt(body.endMinute);
         await store.set(k('arb_settings'), JSON.stringify({
           chargeTargetPct: parseInt(body.chargeTargetPct) || 50,
-          startHour: body.startHour !== undefined ? parseInt(body.startHour) : 23,
-          startMinute: body.startMinute !== undefined ? parseInt(body.startMinute) : 30,
-          endHour: body.endHour !== undefined ? parseInt(body.endHour) : 5,
-          endMinute: body.endMinute !== undefined ? parseInt(body.endMinute) : 30,
+          startHour: !isNaN(_sh) ? _sh : 23,
+          startMinute: !isNaN(_sm) ? _sm : 30,
+          endHour: !isNaN(_eh) ? _eh : 5,
+          endMinute: !isNaN(_em) ? _em : 30,
           carControlEnabled: !!body.carControlEnabled,
           carChargeLimit: Math.min(100, Math.max(50, parseInt(body.carChargeLimit) || 80)),
           carChargeLimitPhase2: Math.min(100, Math.max(50, parseInt(body.carChargeLimitPhase2) || 50))
@@ -127,9 +143,9 @@ exports.handler = async (event) => {
           arbEnabled: body.arbEnabled !== false
         }));
         // Force strategy recalculation on next tick when settings change
-        const state = JSON.parse(await store.get(k('state')) || DEFAULT_STATE);
-        state.dayRatesCacheDay = null;
-        await store.set(k('state'), JSON.stringify(state));
+        const freshState = JSON.parse(await store.get(k('state')) || DEFAULT_STATE);
+        freshState.dayRatesCacheDay = null;
+        await store.set(k('state'), JSON.stringify(freshState));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
 
@@ -144,7 +160,9 @@ exports.handler = async (event) => {
       }
 
       if (body.action === 'save_pct_export') {
-        await store.set(k('pct_export'), JSON.stringify({ targetPct: parseInt(body.targetPct) }));
+        const t = parseInt(body.targetPct);
+        if (isNaN(t) || t < 0 || t > 100) return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Invalid targetPct' }) };
+        await store.set(k('pct_export'), JSON.stringify({ targetPct: t }));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
 
