@@ -163,7 +163,25 @@ async function getImportDayRate(store, deviceId) {
 }
 
 async function getGoOffPeakRate(store, deviceId) {
-  return getImportRateAtHour(store, deviceId, 2); // 2am = Go off-peak rate
+  try {
+    const settings = JSON.parse(await store.get('oct_settings_' + deviceId) || 'null');
+    // Prefer the stored off-peak rate detected from the tariff at setup time
+    if (settings && settings.offPeakRate) return parseFloat(settings.offPeakRate);
+    // Fallback: fetch the current slot — safe because this is only called during 23:30–05:30 BST
+    if (!settings || !settings.octKey || !settings.octImportTariff || !settings.octImportProduct) return null;
+    const now = new Date();
+    const slotStart = new Date(now);
+    slotStart.setMinutes(now.getMinutes() >= 30 ? 30 : 0, 0, 0);
+    const slotEnd = new Date(slotStart.getTime() + 30 * 60 * 1000);
+    const fmt = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const path = '/v1/products/' + settings.octImportProduct + '/electricity-tariffs/' + settings.octImportTariff +
+      '/standard-unit-rates/?period_from=' + fmt(slotStart) + '&period_to=' + fmt(slotEnd) + '&page_size=2';
+    const authHeader = 'Basic ' + Buffer.from(settings.octKey + ':').toString('base64');
+    const res = await makeRequest({ hostname: 'api.octopus.energy', path, method: 'GET', headers: { 'Authorization': authHeader } }, null);
+    const data = JSON.parse(res.body);
+    if (data.results && data.results.length > 0) return parseFloat(parseFloat(data.results[0].value_inc_vat).toFixed(2));
+  } catch(e) {}
+  return null;
 }
 
 async function wakeVehicle(token, apiBase, vehicleId) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/wake_up`, {}); }
@@ -224,14 +242,21 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     state.dayNonExportStart = null;
     state.dayChargeStartMins = null;
 
-    const windowStart = new Date(); windowStart.setHours(5, 30, 0, 0);
-    const stopTimeDate = new Date(); stopTimeDate.setHours(stopHour, stopMinute, 0, 0);
+    const _londonDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+    const _londonTz = new Date().toLocaleTimeString('en-GB', { timeZone: 'Europe/London', timeZoneName: 'short' }).includes('BST') ? '+01:00' : '+00:00';
+    const windowStart = new Date(`${_londonDate}T05:30:00${_londonTz}`);
+    const stopTimeDate = new Date(`${_londonDate}T${String(stopHour).padStart(2,'0')}:${String(stopMinute).padStart(2,'0')}:00${_londonTz}`);
     const [exportRates, importRate] = await Promise.all([
       getOctopusRatesForWindow(store, windowStart, stopTimeDate, deviceId),
       getImportDayRate(store, deviceId)
     ]);
     state.dayImportRate = importRate;
     if (!importRate) log(state, 'Day: import rate unavailable — day costs will not be tracked. Check Settings and press Re-detect tariff.');
+    // Cache off-peak rate for sell-export cost attribution (read from stored tariff settings)
+    try {
+      const octCfg = JSON.parse(await store.get('oct_settings_' + deviceId) || 'null');
+      if (octCfg && octCfg.offPeakRate) state.dayOffPeakRate = parseFloat(octCfg.offPeakRate);
+    } catch(e) {}
     const EFFICIENCY = 0.9;
     const SLOT_KWH = 2.5; // 5kW × 0.5hr
     const CHARGE_RATE_KW = 3.68;
@@ -247,6 +272,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     let dayExportSlots = [], dayNeedsCharge = false, dayChargeTargetPct = 100, dayChargeSlot = null;
     let dayEstimatedRevenue = 0, dayEstimatedImportCost = 0;
 
+    state.dayRatesCacheDay = currentDateKey; // always set to prevent retry storm if rates are empty
     if (exportRates.length > 0) {
       // Arb strategy: spread-profitable slots, will import from grid
       if (arbEnabled && importRate) {
@@ -313,7 +339,6 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       const arbRevenue = arbWindow.reduce((sum, s) => sum + s.value * EFFICIENCY * SLOT_KWH, 0) / 100;
       dayEstimatedRevenue = parseFloat((sellRevenue + arbRevenue).toFixed(2));
 
-      state.dayRatesCacheDay = currentDateKey;
       state.dayExportSlots = dayExportSlots;
       state.dayNeedsCharge = dayNeedsCharge;
       state.dayChargeTargetPct = dayChargeTargetPct;
@@ -334,15 +359,23 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     if (state.dayExporting) {
       try { await setExport(access, apiBase, siteId, false); await setMode(access, apiBase, siteId, 'autonomous', 0); } catch(e) {}
       state.dayExporting = false;
+      state.dayWindowEndReset = false;
       log(state, 'Day: window ended at ' + fmt2(h) + ':' + fmt2(m) + ' — export off, ready for overnight cycle');
     }
     if (state.dayCharging) {
       try { await setMode(access, apiBase, siteId, 'autonomous', 0); } catch(e) {}
       state.dayCharging = false;
+      state.dayWindowEndReset = false;
       log(state, 'Day: window ended — charge off');
+    }
+    // Reset reserve to 0% once per window-end so the overnight cycle starts cleanly
+    if (!state.dayWindowEndReset) {
+      try { await setMode(access, apiBase, siteId, 'autonomous', 0); } catch(e) {}
+      state.dayWindowEndReset = true;
     }
     return;
   }
+  state.dayWindowEndReset = false; // clear flag when window is active so it fires again next window-end
 
   const pct = currentPctRaw >= 0 ? currentPctRaw : 0;
   const pctInt = Math.round(pct);
@@ -455,11 +488,11 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
         const slotMins = sh * 60 + sm;
         return minuteOfDay >= slotMins && minuteOfDay < slotMins + 30;
       });
-      state.dayExportStart = { pct, time: now, rate, type: currentExportSlot ? currentExportSlot.type : 'sell' };
+      state.dayExportStart = { pct, time: now, rate, type: currentExportSlot ? currentExportSlot.type : (state.dayNeedsCharge ? 'arb' : 'sell') };
       log(state, 'Day: export on — ' + (rate > 0 ? rate.toFixed(1) + 'p' : 'rate unavailable') + ' (battery ' + pctInt + '%, floor ' + reserveFloorPct + '%)');
       await sendPush(store, deviceId, 'Day export started', (rate > 0 ? rate.toFixed(1) + 'p/kWh · ' : '') + 'Battery at ' + pctInt + '%');
     } catch(e) { log(state, 'Day: export start error: ' + e.message); }
-  } else if (!shouldExport && state.dayExporting) {
+  } else if (!shouldExport && state.dayExporting && !state.carSyncPausedExport) {
     try {
       await setExport(access, apiBase, siteId, false);
       // Away mode: restore to reserve floor so the Powerwall protects the remaining battery
@@ -467,6 +500,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       const postExportReserve = ds.awayMode !== false ? reserveFloorPct : 0;
       await setMode(access, apiBase, siteId, 'autonomous', postExportReserve);
       state.dayExporting = false;
+      state.dayLastReserveRefresh = now; // prevent immediate re-call on same tick
       if (state.dayExportStart) {
         const durationHrs = (now - state.dayExportStart.time) / 3600000;
         const totalDropPct = state.dayExportStart.pct - pct;
@@ -485,7 +519,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
         }
         // Attribute cost for sell exports: the kWh came from the overnight charge at off-peak rate
         if (netExportedKwh > 0 && (state.dayExportStart.type || 'sell') === 'sell') {
-          const sellChargeRate = state.stats && state.stats.offPeakRate ? state.stats.offPeakRate : 0;
+          const sellChargeRate = state.dayOffPeakRate || (state.stats && state.stats.offPeakRate) || 0;
           if (sellChargeRate > 0) {
             const sellCost = parseFloat((netExportedKwh * sellChargeRate / 100).toFixed(2));
             state.dayStats.importCost = parseFloat(((state.dayStats.importCost || 0) + sellCost).toFixed(2));
@@ -503,7 +537,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
 
   // Away mode: periodically refresh the Powerwall reserve to track the sliding adaptive floor.
   // This prevents the battery draining below the floor for house loads between export slots.
-  if (ds.awayMode !== false && !state.dayExporting && !state.dayCharging && !shouldCharge) {
+  if (ds.awayMode !== false && !state.dayExporting && !state.dayCharging && !shouldCharge && !state.carSyncActive) {
     if (!state.dayLastReserveRefresh || (now - state.dayLastReserveRefresh) >= 5 * 60 * 1000) {
       try { await setMode(access, apiBase, siteId, 'autonomous', reserveFloorPct); } catch(e) {}
       state.dayLastReserveRefresh = now;
@@ -934,7 +968,8 @@ async function processUser(store, deviceId) {
       }
     }
     else if (state.phase === 3) {
-      const phase3PastEnd = h > endHour || (h === endHour && m >= endMinute);
+      const _nowM3 = h * 60 + m, _endM3 = endHour * 60 + endMinute, _startM3 = startHour * 60 + startMinute;
+      const phase3PastEnd = _startM3 > _endM3 ? (_nowM3 >= _endM3 && _nowM3 < _startM3) : (_nowM3 >= _endM3);
       if (phase3PastEnd) {
         if (state.stats.offPeakRate && (state.stats.kwh || 0) > 0) {
           state.stats.importCost = parseFloat((state.stats.kwh * state.stats.offPeakRate / 100).toFixed(2));
@@ -955,7 +990,7 @@ async function processUser(store, deviceId) {
         }
       }
     }
-    else if (state.phase === 4 && (h > endHour || (h === endHour && m >= endMinute))) {
+    else if (state.phase === 4 && (() => { const _n = h*60+m, _e = endHour*60+endMinute, _s = startHour*60+startMinute; return _s > _e ? (_n >= _e && _n < _s) : (_n >= _e); })()) {
       if (state.stats.offPeakRate && (state.stats.kwh || 0) > 0) {
         state.stats.importCost = parseFloat((state.stats.kwh * state.stats.offPeakRate / 100).toFixed(2));
         state.stats.profit = parseFloat((state.stats.earned - state.stats.importCost).toFixed(2));
