@@ -389,6 +389,38 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
           </div>
         </div>
 
+        <div class="card" id="tariff-schedule-card" style="display:none">
+          <div class="card-title">Import tariff schedule</div>
+          <div id="tariff-schedule-detected" style="font-size:13px;color:#3c3c43;margin-bottom:10px;line-height:1.55"></div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:#8e8e93;margin-bottom:6px">
+            <span>Device timezone</span>
+            <span id="tariff-tz-device" style="color:#1d1d1f;font-weight:500">—</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:#8e8e93;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #f2f2f7">
+            <span>Server timezone</span>
+            <span style="color:#1d1d1f;font-weight:500">Europe/London</span>
+          </div>
+          <div style="margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px">
+              <div style="font-size:12px;font-weight:500;color:#8e8e93">Off-peak starts</div>
+              <div style="font-size:22px;font-weight:700;color:#1d1d1f" id="off-peak-start-val">23:30</div>
+            </div>
+            <input class="export-slider" type="range" id="off-peak-start-slider" min="0" max="47" step="1" value="47" oninput="onOffPeakSliderChange()">
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:#8e8e93;margin-top:2px"><span>00:00</span><span>23:30</span></div>
+          </div>
+          <div style="margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px">
+              <div style="font-size:12px;font-weight:500;color:#8e8e93">Off-peak ends</div>
+              <div style="font-size:22px;font-weight:700;color:#1d1d1f" id="off-peak-end-val">05:30</div>
+            </div>
+            <input class="export-slider" type="range" id="off-peak-end-slider" min="0" max="47" step="1" value="11" oninput="onOffPeakSliderChange()">
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:#8e8e93;margin-top:2px"><span>00:00</span><span>23:30</span></div>
+          </div>
+          <div style="font-size:11px;color:#8e8e93;margin-bottom:12px">Saving will update the Night cycle start and end times to match.</div>
+          <button class="btn-primary" onclick="saveTariffSchedule()">Save schedule</button>
+          <div id="tariff-schedule-result" style="font-size:12px;margin-top:8px;min-height:16px"></div>
+        </div>
+
         <div class="card">
           <div class="earn-grid">
             <div class="earn-card"><div class="earn-val" id="earn-today">£—</div><div class="earn-lbl">Today's earnings</div></div>
@@ -776,9 +808,14 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         <div class="card-title">Tariff tab</div>
         <div class="guide-intro">Shows your live Octopus Agile export rates for today and tomorrow, plus your Go import rate profile — so you can see the spread at a glance before deciding whether to run Day mode.</div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Export chart</strong> — each bar is a 30-minute slot. <span class="green" style="font-weight:600">Green</span> = best (&gt;25p), <span class="blue" style="font-weight:600">blue</span> = good (18–25p), <span class="amber" style="font-weight:600">amber</span> = fair (&lt;18p). Switch between today and tomorrow with the buttons at the top.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Import chart</strong> — shows your Go tariff rate profile across the day: blue bars are the off-peak rate (23:30–05:30), grey bars are the standard daytime rate. The spread between the two charts shows where arbitrage is profitable.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Import chart</strong> — shows your Go tariff rate profile across the day. Blue bars are off-peak (cheapest rate), grey bars are the standard daytime rate. The off-peak window is detected automatically from your Octopus account.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Best export windows</strong> — the top 5 slots ranked by rate. Use this to plan manual exports or to sense-check whether the overnight cycle is running at the right time.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Earnings estimator</strong> — enter a kWh figure to see what it would earn at the current rate. Useful for a quick calculation before a manual export.</div></div>
+        <div class="guide-section-lbl">Import tariff schedule</div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Detected automatically</strong> — when you connect your Octopus account, the app fetches your import tariff rates and identifies the off-peak window (e.g. 23:30–05:30 at 7.5p/kWh). This is shown below the import chart for confirmation.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Sliders</strong> — if the detected times are wrong, drag the Off-peak starts and Off-peak ends sliders to the correct times and tap <strong>Save schedule</strong>. Saving also updates the Night cycle start and end times to match.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Timezone</strong> — your device's detected timezone and the server timezone (Europe/London) are shown for reference. If they differ, all scheduled times in the app are based on the server timezone (London).</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Re-detect</strong> — if you change your import tariff, go to <strong>Settings → Re-detect tariff</strong>. This refreshes the tariff codes and off-peak window so cost calculations stay accurate.</div></div>
       </div>
 
       <div class="card">
@@ -827,11 +864,10 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         </div>
         <div class="guide-section-lbl">Key settings</div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Charge to %</strong> — how full to charge before exporting. <strong>80–90% is recommended.</strong> Higher means more energy to sell but a longer charge time.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Start time</strong> — set this to when your cheap overnight import rate begins. Common choices: 23:30 (Agile or Octopus Go), 02:00 (Cosy). Check your import tariff.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>End time</strong> — when the cycle finishes and normal operation resumes. 05:30 works for most tariffs. Set it before your cheap rate window ends.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Start and end times</strong> — these are set automatically when you save your tariff schedule on the Tariff tab. They should match your import tariff's off-peak window (e.g. 23:30–05:30 for Octopus Go). You can also adjust them manually here if needed.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Car charging control</strong> — if your Tesla car charges overnight, enable this. Phase 2 stops the car charging to maximise your export, then resumes it in Phase 3. If you use Octopus car sync with Car first priority, Phase 2 export is paused instead so the battery charges alongside the car.</div></div>
         <div class="guide-section-lbl">Earnings</div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>kWh exported / Revenue / Cost / Profit</strong> — the Night tab tracks all four. Cost covers the grid electricity used to charge the battery in Phase 1 (the charge-up before export), calculated at your Go off-peak rate. Phase 3 recharge is excluded — that energy is for the house and would be bought regardless. Profit = Revenue − Cost.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>kWh exported / Revenue / Cost / Profit</strong> — the Night tab tracks all four. Cost = kWh exported × your off-peak rate (detected from your tariff). Phase 3 recharge is excluded — that energy is for the house and would be bought regardless. Profit = Revenue − Cost. Cost will show £— if the off-peak rate has not been detected yet — go to the Tariff tab and check the import tariff schedule.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Earnings are estimates.</strong> The app calculates from battery capacity and Agile rates. Your actual Octopus credit may differ slightly due to meter timing and standing charges.</div></div>
         <div class="guide-section-lbl">Octopus car sync</div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Sync battery with car</strong> — detects whenever your car is charging (for example on an Octopus Go or Intelligent Octopus schedule) and charges the Powerwall at the same time, using the same cheap rate window.</div></div>
@@ -853,7 +889,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Slots shown with a green ARB badge</strong> — these show the p/kWh profit margin after subtracting the import cost and round-trip losses.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Minimum profit margin</strong> — default 2p/kWh. Raise it to only act on strong spread days; lower it to catch more marginal slots.</div></div>
         <div class="guide-section-lbl">Earnings</div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>kWh exported / Revenue / Cost / Profit</strong> — Cost tracks actual grid import spend during arbitrage charge windows. Sell slots have no import cost so their revenue goes straight to profit.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>kWh exported / Revenue / Cost / Profit</strong> — for Sell slots, Cost = kWh exported × your overnight off-peak rate (the energy was charged cheaply the night before). For Arbitrage slots, Cost = kWh imported from the grid at the daytime rate. Profit = Revenue − Cost across both types.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Strategy card always visible</strong> — you can preview today's opportunity before enabling Day mode. Enable it to act on the strategy shown.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div>Day mode and overnight arbitrage work together automatically. Day mode handles the day, overnight arbitrage handles the night.</div></div>
       </div>
@@ -861,8 +897,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
       <div class="card">
         <div class="card-title">Good practice</div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Check after your first overnight run.</strong> Open the Night tab in the morning — confirm all phases completed and earnings are showing. The phase timeline shows where the cycle got to.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Align your start time with your import tariff.</strong> Phase 1 charges from the grid — make sure this happens during your cheapest rate window, not outside it.</div></div>
-        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Earnings are estimates.</strong> The app calculates from battery capacity and Agile rates. Your actual Octopus credit may differ slightly due to meter timing and standing charges. Cost figures use your Go off-peak rate fetched live from the Octopus API.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Set your tariff schedule first.</strong> After connecting Octopus, go to the <strong>Tariff tab</strong> and confirm the detected off-peak window. Tapping Save schedule automatically sets the Night cycle start and end times and ensures cost calculations are accurate.</div></div>
+        <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Earnings are estimates.</strong> The app calculates from battery capacity and Agile rates. Your actual Octopus credit may differ slightly due to meter timing and standing charges.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Don't run manual exports during an overnight cycle.</strong> The automated cycle manages export mode itself — using the manual controls on the Home tab at the same time will interfere.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>The 5-day chart builds over time.</strong> It takes 5 days to become fully representative. During that period it shows however many days of history have been collected.</div></div>
         <div class="guide-tip"><div class="guide-tip-dot"></div><div><strong>Enable push notifications.</strong> Go to Settings → Notifications and enable push notifications. You'll get an alert at each phase transition overnight so you can check the app is running correctly without staying awake.</div></div>
@@ -965,6 +1001,9 @@ let state = {
   octProduct: localStorage.getItem('oct_product') || '',
   octImportTariff: localStorage.getItem('oct_import_tariff') || '',
   octImportProduct: localStorage.getItem('oct_import_product') || '',
+  offPeakStart: localStorage.getItem('off_peak_start') || '',
+  offPeakEnd: localStorage.getItem('off_peak_end') || '',
+  offPeakRate: parseFloat(localStorage.getItem('off_peak_rate') || '0') || 0,
   energySiteId: localStorage.getItem('energy_site_id') || null,
   todayRates: [], tomorrowRates: [], currentDay: 'today',
   exportTimer: null, exportEndTime: null, activeExportBtn: null,
@@ -1494,7 +1533,16 @@ async function connectOctopus() {
     if (importTariffCode) {
       localStorage.setItem('oct_import_tariff', importTariffCode); state.octImportTariff = importTariffCode;
       localStorage.setItem('oct_import_product', importProductCode); state.octImportProduct = importProductCode;
+      const offPeakResult = await detectOffPeakWindow(key, importTariffCode, importProductCode);
+      if (offPeakResult && !offPeakResult.isFlat) {
+        state.offPeakStart = offPeakResult.offPeakStart; state.offPeakEnd = offPeakResult.offPeakEnd; state.offPeakRate = offPeakResult.offPeakRate;
+        localStorage.setItem('off_peak_start', offPeakResult.offPeakStart);
+        localStorage.setItem('off_peak_end', offPeakResult.offPeakEnd);
+        localStorage.setItem('off_peak_rate', String(offPeakResult.offPeakRate));
+        showTariffScheduleCard();
+      }
     }
+    await syncOctopusToServer();
     result.style.color = '#1a7f37';
     result.textContent = 'Connected — export: ' + tariffCode + (importTariffCode ? ' · import: ' + importTariffCode : ' · no import tariff found');
     toast('Octopus connected!');
@@ -1552,7 +1600,7 @@ function updateCurrentRate() {
   const cur=state.todayRates[idx], next=state.todayRates[idx+1]||(state.tomorrowRates[0]);
   if (cur!=null) document.getElementById('cur-rate').innerHTML = cur.toFixed(1)+'<span class="unit"> p/kWh</span>';
   if (next!=null) {
-    const nextH=Math.floor((idx+1)/2), nextM=(idx+1)%2===0?'00':'30';
+    const nextIdx=(idx+1)%48, nextH=Math.floor(nextIdx/2), nextM=nextIdx%2===0?'00':'30';
     document.getElementById('next-slot-time').textContent='Next ('+String(nextH).padStart(2,'0')+':'+nextM+')';
     document.getElementById('next-rate').textContent=next.toFixed(1)+'p';
   }
@@ -1599,6 +1647,7 @@ function initTariffPage() {
   if (!state.octKey) { document.getElementById('tariff-no-key').style.display='block'; document.getElementById('tariff-content').style.display='none'; return; }
   if (state.todayRates.every(r=>r===null)) loadRates();
   if (state.octImportTariff && state.octImportProduct) loadImportRates();
+  showTariffScheduleCard();
 }
 
 async function loadImportRates() {
@@ -1627,14 +1676,18 @@ async function loadImportRates() {
       }
     });
     // If still sparse (e.g. Go only returns daytime rate for today's window), fill gaps
-    // by finding the dominant rate and assuming off-peak slots are the minority low ones
+    // using the detected off-peak window from the tariff, falling back to hardcoded Go times
     const filled = slots.filter(r => r !== null);
     if (filled.length > 0 && slots.some(r => r === null)) {
       const maxRate = Math.max(...filled);
       const minRate = Math.min(...filled);
-      // Off-peak is 23:30-05:30 (UTC times may shift — use index approach)
+      const offStart = state.offPeakStart ? timeToSlot(state.offPeakStart) : 47;
+      const offEnd = state.offPeakEnd ? timeToSlot(state.offPeakEnd) : 11;
       for (let i = 0; i < 48; i++) {
-        if (slots[i] === null) slots[i] = (i < 11 || i >= 47) ? minRate : maxRate;
+        if (slots[i] === null) {
+          const isOffPeak = offStart > offEnd ? (i >= offStart || i < offEnd) : (i >= offStart && i < offEnd);
+          slots[i] = isOffPeak ? minRate : maxRate;
+        }
       }
     }
     renderImportChart(slots);
@@ -1677,6 +1730,137 @@ function renderImportChart(slots) {
       label: item => rates[item.dataIndex] > 0 ? ' ' + rates[item.dataIndex].toFixed(1) + 'p/kWh' : ' No data'
     }}}, scales: { x: { ticks: { font: { size: 9 }, color: '#8e8e93', maxRotation: 90, minRotation: 90, autoSkip: false }, grid: { display: false }, border: { display: false } }, y: { ticks: { font: { size: 10 }, color: '#8e8e93', callback: v => v + 'p' }, grid: { color: '#f2f2f7' }, border: { display: false } } } }
   });
+  showTariffScheduleCard();
+}
+
+function slotToTime(slot) {
+  const h = Math.floor(slot / 2);
+  const m = slot % 2 === 0 ? '00' : '30';
+  return String(h).padStart(2, '0') + ':' + m;
+}
+
+function timeToSlot(timeStr) {
+  if (!timeStr) return 0;
+  const [h, m] = timeStr.split(':').map(Number);
+  return h * 2 + (m >= 30 ? 1 : 0);
+}
+
+function onOffPeakSliderChange() {
+  const startSlot = parseInt(document.getElementById('off-peak-start-slider').value);
+  const endSlot = parseInt(document.getElementById('off-peak-end-slider').value);
+  document.getElementById('off-peak-start-val').textContent = slotToTime(startSlot);
+  document.getElementById('off-peak-end-val').textContent = slotToTime(endSlot);
+  const resultEl = document.getElementById('tariff-schedule-result');
+  if (startSlot <= endSlot && resultEl) {
+    resultEl.style.color = '#ff9500';
+    resultEl.textContent = 'Note: off-peak start is before end on the same day — confirm this is correct for your tariff (most overnight tariffs cross midnight).';
+  } else if (resultEl && resultEl.style.color === 'rgb(255, 149, 0)') {
+    resultEl.textContent = '';
+  }
+}
+
+function showTariffScheduleCard() {
+  const card = document.getElementById('tariff-schedule-card');
+  if (!card) return;
+  // Timezone
+  const tzEl = document.getElementById('tariff-tz-device');
+  if (tzEl) {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const offset = new Date().toLocaleTimeString('en-GB', { timeZone: tz, timeZoneName: 'short' }).split(' ').pop();
+      tzEl.textContent = tz + (offset ? ' (' + offset + ')' : '');
+    } catch(e) { tzEl.textContent = 'Unknown'; }
+  }
+  if (!state.offPeakStart || !state.offPeakEnd) return;
+  card.style.display = '';
+  // Detected banner
+  const detectedEl = document.getElementById('tariff-schedule-detected');
+  if (detectedEl) {
+    let txt = 'Detected from your Octopus tariff: ' + state.offPeakStart + '–' + state.offPeakEnd;
+    if (state.offPeakRate) txt += ' at ' + state.offPeakRate.toFixed(1) + 'p/kWh off-peak';
+    detectedEl.textContent = txt;
+  }
+  // Sliders
+  document.getElementById('off-peak-start-slider').value = timeToSlot(state.offPeakStart);
+  document.getElementById('off-peak-end-slider').value = timeToSlot(state.offPeakEnd);
+  document.getElementById('off-peak-start-val').textContent = state.offPeakStart;
+  document.getElementById('off-peak-end-val').textContent = state.offPeakEnd;
+}
+
+async function detectOffPeakWindow(apiKey, importTariffCode, importProductCode) {
+  try {
+    const now = new Date();
+    const start = now;
+    const end = new Date(now.getTime() + 36 * 60 * 60 * 1000);
+    const fmt = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const resp = await fetch(
+      `${OCTOPUS_API}/products/${importProductCode}/electricity-tariffs/${importTariffCode}/standard-unit-rates/?period_from=${fmt(start)}&period_to=${fmt(end)}&page_size=50`,
+      { headers: { 'Authorization': 'Basic ' + btoa(apiKey + ':') } }
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const results = data.results || [];
+    if (!results.length) return null;
+    const minRate = Math.min(...results.map(r => parseFloat(r.value_inc_vat)));
+    const maxRate = Math.max(...results.map(r => parseFloat(r.value_inc_vat)));
+    if (Math.abs(minRate - maxRate) < 0.1) return { offPeakRate: parseFloat(minRate.toFixed(2)), isFlat: true };
+    // Find the longest minimum-rate period (avoids partial windows at query edges)
+    const offPeakPeriods = results.filter(r => parseFloat(r.value_inc_vat) <= minRate + 0.01 && r.valid_to);
+    if (!offPeakPeriods.length) return null;
+    offPeakPeriods.sort((a, b) => (new Date(b.valid_to) - new Date(b.valid_from)) - (new Date(a.valid_to) - new Date(a.valid_from)));
+    const offPeak = offPeakPeriods[0];
+    const toHHMM = utcStr => new Date(utcStr).toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false });
+    return {
+      offPeakStart: toHHMM(offPeak.valid_from),
+      offPeakEnd: toHHMM(offPeak.valid_to),
+      offPeakRate: parseFloat(minRate.toFixed(2)),
+      standardRate: parseFloat(maxRate.toFixed(2))
+    };
+  } catch(e) { return null; }
+}
+
+async function saveTariffSchedule() {
+  const startTime = document.getElementById('off-peak-start-val').textContent;
+  const endTime = document.getElementById('off-peak-end-val').textContent;
+  const [startH, startM] = startTime.split(':').map(Number);
+  const [endH, endM] = endTime.split(':').map(Number);
+  const resultEl = document.getElementById('tariff-schedule-result');
+  resultEl.textContent = 'Saving…'; resultEl.style.color = '#8e8e93';
+  try {
+    const deviceId = getDeviceId();
+    // Save off-peak window to oct_settings blob
+    await fetch('/.netlify/functions/arb-api', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save_tariff_window', device_id: deviceId, offPeakStart: startTime, offPeakEnd: endTime, offPeakRate: state.offPeakRate || null })
+    });
+    // Update Night cycle start/end in arb_settings
+    const arb = state.arbSettings || {};
+    await fetch('/.netlify/functions/arb-api', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'save_arb_settings', device_id: deviceId,
+        chargeTargetPct: arb.chargeTargetPct || 50,
+        startHour: startH, startMinute: startM,
+        endHour: endH, endMinute: endM,
+        carControlEnabled: arb.carControlEnabled || false,
+        carChargeLimit: arb.carChargeLimit || 80,
+        carChargeLimitPhase2: arb.carChargeLimitPhase2 || 50
+      })
+    });
+    // Persist locally
+    localStorage.setItem('off_peak_start', startTime);
+    localStorage.setItem('off_peak_end', endTime);
+    state.offPeakStart = startTime; state.offPeakEnd = endTime;
+    // Update Night settings UI if visible
+    const sh = document.getElementById('arb-start-time'), eh = document.getElementById('arb-end-time');
+    if (sh) sh.value = startTime; if (eh) eh.value = endTime;
+    resultEl.style.color = '#1a7f37';
+    resultEl.textContent = 'Saved — Night cycle updated to ' + startTime + '–' + endTime;
+    toast('Tariff schedule saved');
+  } catch(e) {
+    resultEl.style.color = '#ff3b30';
+    resultEl.textContent = 'Error: ' + e.message;
+  }
 }
 
 // ── Server-side arbitrage ─────────────────────────────────
@@ -1707,6 +1891,9 @@ async function syncOctopusToServer() {
         octAccount: state.octAccount,
         octImportTariff: state.octImportTariff || null,
         octImportProduct: state.octImportProduct || null,
+        offPeakStart: state.offPeakStart || null,
+        offPeakEnd: state.offPeakEnd || null,
+        offPeakRate: state.offPeakRate || null,
         device_id: getDeviceId()
       })
     });
@@ -1992,13 +2179,9 @@ function populateArbSettings(settings) {
     carVehicleLabel.style.color = state.vehicleId ? '#34c759' : '#ff9500';
   }
   const carStatusRow = document.getElementById('car-status-row');
-  if (carStatusRow) {
-    carStatusRow.style.display = state.vehicleId ? 'flex' : 'none';
-    if (state.vehicleId) refreshCarStatus();
-  }
+  if (carStatusRow) carStatusRow.style.display = state.vehicleId ? 'flex' : 'none';
 
-  // Also update the client-side monitor threshold
-  state.arbSettings = { chargeTargetPct: pct, startHour: sh, startMinute: sm, endHour: eh, endMinute: em, carControlEnabled: carCtrl, carChargeLimit: carLimit };
+  state.arbSettings = { chargeTargetPct: pct, startHour: sh, startMinute: sm, endHour: eh, endMinute: em, carControlEnabled: carCtrl, carChargeLimit: carLimit, carChargeLimitPhase2: carLimitP2 };
 }
 
 async function refreshCarStatus() {
@@ -2180,7 +2363,7 @@ async function startArbPhase2(liveData) {
 async function startArbPhase3() {
   setArbPhase(3);
   arbLog('Phase 3: Export complete — recharging to 100%');
-  const kwhExported = 13.5;
+  const kwhExported = parseFloat(((state.arbExportStartPct - 2) / 100 * 13.5).toFixed(2));
   const earned = (kwhExported * state.arbStats.rate) / 100;
   state.arbStats.kwh = kwhExported;
   state.arbStats.earned = earned;
@@ -2640,6 +2823,14 @@ async function saveOctopusSettings() {
     if (importTariffCode) {
       localStorage.setItem('oct_import_tariff', importTariffCode); state.octImportTariff = importTariffCode;
       localStorage.setItem('oct_import_product', importProductCode); state.octImportProduct = importProductCode;
+      const offPeakResult = await detectOffPeakWindow(key, importTariffCode, importProductCode);
+      if (offPeakResult && !offPeakResult.isFlat) {
+        state.offPeakStart = offPeakResult.offPeakStart; state.offPeakEnd = offPeakResult.offPeakEnd; state.offPeakRate = offPeakResult.offPeakRate;
+        localStorage.setItem('off_peak_start', offPeakResult.offPeakStart);
+        localStorage.setItem('off_peak_end', offPeakResult.offPeakEnd);
+        localStorage.setItem('off_peak_rate', String(offPeakResult.offPeakRate));
+        showTariffScheduleCard();
+      }
     }
     document.getElementById('s-oct-tariff-txt').textContent = tariffCode + (importTariffCode ? ' · ' + importTariffCode : ' · no import tariff found');
     await syncOctopusToServer();
