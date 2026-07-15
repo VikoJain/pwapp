@@ -357,20 +357,20 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
 
   if (!inWindow) {
     if (state.dayExporting) {
-      try { await setExport(access, apiBase, siteId, false); await setMode(access, apiBase, siteId, 'autonomous', 0); } catch(e) {}
+      try { await setExport(access, apiBase, siteId, false); await setMode(access, apiBase, siteId, 'self_consumption', 0); } catch(e) {}
       state.dayExporting = false;
       state.dayWindowEndReset = false;
       log(state, 'Day: window ended at ' + fmt2(h) + ':' + fmt2(m) + ' — export off, ready for overnight cycle');
     }
     if (state.dayCharging) {
-      try { await setMode(access, apiBase, siteId, 'autonomous', 0); } catch(e) {}
+      try { await setMode(access, apiBase, siteId, 'self_consumption', 0); } catch(e) {}
       state.dayCharging = false;
       state.dayWindowEndReset = false;
       log(state, 'Day: window ended — charge off');
     }
-    // Reset reserve to 0% once per window-end so the overnight cycle starts cleanly
+    // Restore to self-powered mode once per window-end so Tesla doesn't auto-charge before the overnight cycle
     if (!state.dayWindowEndReset) {
-      try { await setMode(access, apiBase, siteId, 'autonomous', 0); } catch(e) {}
+      try { await setMode(access, apiBase, siteId, 'self_consumption', 0); } catch(e) {}
       state.dayWindowEndReset = true;
     }
     return;
@@ -536,8 +536,10 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
   }
 
   // Away mode: periodically refresh the Powerwall reserve to track the sliding adaptive floor.
-  // This prevents the battery draining below the floor for house loads between export slots.
-  if (ds.awayMode !== false && !state.dayExporting && !state.dayCharging && !shouldCharge && !state.carSyncActive) {
+  // Only runs when export slots exist today AND battery is already above the floor —
+  // this prevents export below the floor without triggering grid charging when battery is low.
+  if (ds.awayMode !== false && !state.dayExporting && !state.dayCharging && !shouldCharge && !state.carSyncActive
+      && exportSlots.length > 0 && pctInt > reserveFloorPct) {
     if (!state.dayLastReserveRefresh || (now - state.dayLastReserveRefresh) >= 5 * 60 * 1000) {
       try { await setMode(access, apiBase, siteId, 'autonomous', reserveFloorPct); } catch(e) {}
       state.dayLastReserveRefresh = now;
@@ -819,7 +821,7 @@ async function processUser(store, deviceId) {
   try {
     if (!state.enabled && state.phase > 0) {
       await setExport(access, apiBase, siteId, false);
-      await setMode(access, apiBase, siteId, 'autonomous', 0);
+      await setMode(access, apiBase, siteId, 'self_consumption', 0);
       log(state, 'Arbitrage disabled mid-cycle — export stopped, normal mode restored');
       state.phase = 0;
     }
@@ -842,7 +844,7 @@ async function processUser(store, deviceId) {
       try { const r = await getGoOffPeakRate(store, deviceId); if (r) { state.stats.offPeakRate = r; } else { log(state, 'Note: import rate unavailable — night costs will not be tracked. Check Settings and press Re-detect tariff.'); } } catch(e) { log(state, 'Note: import rate fetch error — night costs will not be tracked'); }
     }
     else if (state.phase === 1) {
-      if (m % 30 === 0) log(state, 'Phase 1 charging — battery at ' + pct + '%');
+      if (m % 30 < 2) log(state, 'Phase 1 charging — battery at ' + pct + '%');
       // Stop car charging during Phase 1 if car control is enabled — prevents car competing for grid import
       if (s.carControlEnabled && tokenData.vehicleId && !state.phase1CarStopSent) {
         const now1 = Date.now();
@@ -931,8 +933,8 @@ async function processUser(store, deviceId) {
         state.stats.phase2LastPct = pct;
         state.stats.phase2LastPctTime = Date.now();
       }
-      if (m % 30 === 0) log(state, 'Phase 2 exporting — battery at ' + pct + '%' + (state.stats.rate > 0 ? ' @ ' + state.stats.rate.toFixed(1) + 'p avg' : ''));
-      if (m % 10 === 0) {
+      if (m % 30 < 2) log(state, 'Phase 2 exporting — battery at ' + pct + '%' + (state.stats.rate > 0 ? ' @ ' + state.stats.rate.toFixed(1) + 'p avg' : ''));
+      if (m % 10 < 2) {
         // Mid-cycle viability check: if not enough time to finish export AND get ≥60 min recharge, skip to Phase 3
         const endTotalMins2 = endHour * 60 + endMinute;
         const nowTotalMins2 = h * 60 + m;
@@ -986,9 +988,9 @@ async function processUser(store, deviceId) {
         await sendPush(store, deviceId, 'Overnight cycle ended', 'End time reached · Battery at ' + pct + '% · Normal mode restored');
         state.phase = 0;
         await setExport(access, apiBase, siteId, false);
-        await setMode(access, apiBase, siteId, 'autonomous', 0);
+        await setMode(access, apiBase, siteId, 'self_consumption', 0);
       } else {
-        if (m % 30 === 0) log(state, 'Phase 3 recharging — battery at ' + pct + '%');
+        if (m % 30 < 2) log(state, 'Phase 3 recharging — battery at ' + pct + '%');
         if (pct >= 98) {
           log(state, 'Phase 3 complete — battery at ' + pct + '%');
           state.phase = 4;
@@ -1004,19 +1006,19 @@ async function processUser(store, deviceId) {
       }
       state.phase = 0;
       await setExport(access, apiBase, siteId, false);
-      await setMode(access, apiBase, siteId, 'autonomous', 0);
-      log(state, '=== Cycle complete — autonomous mode restored, 0% reserve ===');
+      await setMode(access, apiBase, siteId, 'self_consumption', 0);
+      log(state, '=== Cycle complete — self-powered mode restored, 0% reserve ===');
       await sendPush(store, deviceId, 'Overnight cycle complete', 'Normal operation restored · Check Night tab for earnings');
     }
     else if (state.phase === 4) {
-      if (m % 30 === 0) log(state, 'Phase 4: standby — battery at ' + pct + '%, waiting until ' + fmt2(endHour) + ':' + fmt2(endMinute));
+      if (m % 30 < 2) log(state, 'Phase 4: standby — battery at ' + pct + '%, waiting until ' + fmt2(endHour) + ':' + fmt2(endMinute));
     }
     else if (state.phase > 0 && h >= endHour + 1) {
       log(state, 'Safety fallback at ' + fmt2(h) + ':' + fmt2(m) + ' — restoring normal mode');
       await sendPush(store, deviceId, 'Safety override triggered', 'Normal mode restored at ' + fmt2(h) + ':' + fmt2(m) + ' — check Night tab');
       state.phase = 0;
       await setExport(access, apiBase, siteId, false);
-      await setMode(access, apiBase, siteId, 'autonomous', 0);
+      await setMode(access, apiBase, siteId, 'self_consumption', 0);
     }
   } catch (e) {
     log(state, 'Error in phase ' + state.phase + ': ' + e.message);
@@ -1026,7 +1028,7 @@ async function processUser(store, deviceId) {
   if (!state.dayEnabled && !state.holidayEnabled && state.phase === 0 && (state.dayCharging || state.dayExporting)) {
     try {
       await setExport(access, apiBase, siteId, false);
-      await setMode(access, apiBase, siteId, 'autonomous', 0);
+      await setMode(access, apiBase, siteId, 'self_consumption', 0);
       log(state, 'Day: mode disabled — ' + (state.dayCharging ? 'charge' : 'export') + ' stopped, normal mode restored');
       await sendPush(store, deviceId, 'Day mode disabled', 'Powerwall returned to normal mode');
     } catch(e) {}
