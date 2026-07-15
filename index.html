@@ -1046,8 +1046,9 @@ function switchTab(name) {
   if (name==='health') initHealthPage();
   if (name==='settings') populateSettings();
   if (name==='home' && state.teslaToken && state.energySiteId) { startAutoRefresh(); fetchServerSoeHistory(); }
-  if (name==='arb') { renderArbUI(); startServerPoll(); }
-  if (name==='day') { renderDayUI(); startServerPoll(); }
+  if (name==='home' || name==='arb' || name==='day') startServerPoll();
+  if (name==='arb') renderArbUI();
+  if (name==='day') renderDayUI();
 }
 function showSettings() { switchTab('settings'); }
 function toast(msg, dur=2800) {
@@ -1963,16 +1964,14 @@ async function pollServerStatus() {
   try {
     const resp = await fetch('/.netlify/functions/arb-api?device_id=' + encodeURIComponent(getDeviceId()));
     const data = await resp.json();
-    if (data.error) return;
+    if (data.error && !data.phase && !data.stats) return; // only bail if there is no usable state
     // Sync enabled state from server — keeps all devices in sync
     if (typeof data.enabled !== 'undefined' && data.enabled !== state.arbEnabled) {
       state.arbEnabled = data.enabled;
       localStorage.setItem('arb_enabled', data.enabled);
     }
-    // Sync phase
-    if (typeof data.phase !== 'undefined') {
-      state.arbPhase = data.phase;
-    }
+    // Sync phase — always overwrite stale localStorage value with server truth
+    state.arbPhase = data.phase ?? state.arbPhase;
     // Sync earnings
     if (data.stats) state.arbStats = data.stats;
     // Sync strategy settings to the UI
@@ -3112,7 +3111,7 @@ async function autoRefreshLive() {
 
 checkTermsAccepted();
 init();
-pollServerStatus();
+startServerPoll();
 onTimedSliderChange();
 onPctSliderChange();
 
