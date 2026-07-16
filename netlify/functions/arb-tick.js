@@ -838,12 +838,15 @@ async function processUser(store, deviceId) {
       state.phase1CarStopSent = false;
       state.phase1CarCheckTime = null;
       log(state, '=== Arbitrage cycle started ===');
+      await setExport(access, apiBase, siteId, false);
       await setMode(access, apiBase, siteId, 'backup', chargeTargetPct);
-      log(state, 'Phase 1: Reserve set to ' + chargeTargetPct + '% — charging from grid');
+      log(state, 'Phase 1: Reserve set to ' + chargeTargetPct + '% — charging from grid (export disabled)');
       await sendPush(store, deviceId, 'Overnight cycle started', 'Charging battery to ' + chargeTargetPct + '%');
       try { const r = await getGoOffPeakRate(store, deviceId); if (r) { state.stats.offPeakRate = r; } else { log(state, 'Note: import rate unavailable — night costs will not be tracked. Check Settings and press Re-detect tariff.'); } } catch(e) { log(state, 'Note: import rate fetch error — night costs will not be tracked'); }
     }
     else if (state.phase === 1) {
+      // Re-apply backup mode and export-off every tick to prevent Tesla Savings mode reverting
+      try { await setExport(access, apiBase, siteId, false); await setMode(access, apiBase, siteId, 'backup', chargeTargetPct); } catch(e) {}
       if (m % 30 < 2) log(state, 'Phase 1 charging — battery at ' + pct + '%');
       // Stop car charging during Phase 1 if car control is enabled — prevents car competing for grid import
       if (s.carControlEnabled && tokenData.vehicleId && !state.phase1CarStopSent) {
