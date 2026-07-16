@@ -839,14 +839,14 @@ async function processUser(store, deviceId) {
       state.phase1CarCheckTime = null;
       log(state, '=== Arbitrage cycle started ===');
       await setExport(access, apiBase, siteId, false);
-      await setMode(access, apiBase, siteId, 'backup', chargeTargetPct);
+      await setMode(access, apiBase, siteId, 'autonomous', chargeTargetPct);
       log(state, 'Phase 1: Reserve set to ' + chargeTargetPct + '% — charging from grid (export disabled)');
       await sendPush(store, deviceId, 'Overnight cycle started', 'Charging battery to ' + chargeTargetPct + '%');
       try { const r = await getGoOffPeakRate(store, deviceId); if (r) { state.stats.offPeakRate = r; } else { log(state, 'Note: import rate unavailable — night costs will not be tracked. Check Settings and press Re-detect tariff.'); } } catch(e) { log(state, 'Note: import rate fetch error — night costs will not be tracked'); }
     }
     else if (state.phase === 1) {
-      // Re-apply backup mode and export-off every tick to prevent Tesla Savings mode reverting
-      try { await setExport(access, apiBase, siteId, false); await setMode(access, apiBase, siteId, 'backup', chargeTargetPct); } catch(e) {}
+      // Re-apply export-off and autonomous mode every tick to prevent Tesla reverting
+      try { await setExport(access, apiBase, siteId, false); await setMode(access, apiBase, siteId, 'autonomous', chargeTargetPct); } catch(e) {}
       if (m % 30 < 2) log(state, 'Phase 1 charging — battery at ' + pct + '%');
       // Stop car charging during Phase 1 if car control is enabled — prevents car competing for grid import
       if (s.carControlEnabled && tokenData.vehicleId && !state.phase1CarStopSent) {
@@ -880,7 +880,7 @@ async function processUser(store, deviceId) {
           log(state, 'Export skipped — only ' + minsRemaining + ' min until ' + fmt2(endHour) + ':' + fmt2(endMinute) + ', need ~' + (exportMins + minExportWindow) + ' min — recharging instead');
           state.phase = 3;
           state.stats.phase3StartPct = pct;
-          await setMode(access, apiBase, siteId, 'backup', 100);
+          await setMode(access, apiBase, siteId, 'autonomous', 100);
           log(state, 'Phase 3: Recharging from grid');
           await sendPush(store, deviceId, 'Overnight export skipped', 'Not enough time before ' + fmt2(endHour) + ':' + fmt2(endMinute) + ' — recharging instead');
         } else {
@@ -948,7 +948,7 @@ async function processUser(store, deviceId) {
           state.phase = 3;
           state.stats.phase3StartPct = pct;
           await setExport(access, apiBase, siteId, false);
-          await setMode(access, apiBase, siteId, 'backup', 100);
+          await setMode(access, apiBase, siteId, 'autonomous', 100);
           await sendPush(store, deviceId, 'Export shortened — recharging', 'Not enough time to fully export · Recharging now');
         }
       }
@@ -966,7 +966,7 @@ async function processUser(store, deviceId) {
         state.midPhase2CarStopSent = false;
         state.midPhase2CarCheckTime = null;
         await setExport(access, apiBase, siteId, false);
-        await setMode(access, apiBase, siteId, 'backup', 100);
+        await setMode(access, apiBase, siteId, 'autonomous', 100);
         log(state, 'Phase 3: Export off — reserve set to 100%, recharging from grid');
         await sendPush(store, deviceId, 'Export complete — recharging', '~' + kwhExported + ' kWh · Est. £' + earned.toFixed(2) + ' · Battery recharging now');
         if (s.carControlEnabled && tokenData.vehicleId) {
