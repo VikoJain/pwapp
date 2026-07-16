@@ -495,12 +495,11 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
   } else if (!shouldExport && state.dayExporting && !state.carSyncPausedExport) {
     try {
       await setExport(access, apiBase, siteId, false);
-      // Away mode: restore to reserve floor so the Powerwall protects the remaining battery
-      // for house loads until the stop time. At-home mode: no restriction (user is present).
-      const postExportReserve = ds.awayMode !== false ? reserveFloorPct : 0;
-      await setMode(access, apiBase, siteId, 'autonomous', postExportReserve);
+      // Switch to self-powered mode with 0% reserve so the house naturally drains the
+      // remaining battery — no grid charging, no Tesla Savings mode exporting.
+      // The adaptive floor only controls when to stop exporting, not the Powerwall reserve.
+      await setMode(access, apiBase, siteId, 'self_consumption', 0);
       state.dayExporting = false;
-      state.dayLastReserveRefresh = now; // prevent immediate re-call on same tick
       if (state.dayExportStart) {
         const durationHrs = (now - state.dayExportStart.time) / 3600000;
         const totalDropPct = state.dayExportStart.pct - pct;
@@ -535,16 +534,9 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     } catch(e) { log(state, 'Day: export stop error: ' + e.message); }
   }
 
-  // Away mode: periodically refresh the Powerwall reserve to track the sliding adaptive floor.
-  // Only runs when export slots exist today AND battery is already above the floor —
-  // this prevents export below the floor without triggering grid charging when battery is low.
-  if (ds.awayMode !== false && !state.dayExporting && !state.dayCharging && !shouldCharge && !state.carSyncActive
-      && exportSlots.length > 0 && pctInt > reserveFloorPct) {
-    if (!state.dayLastReserveRefresh || (now - state.dayLastReserveRefresh) >= 5 * 60 * 1000) {
-      try { await setMode(access, apiBase, siteId, 'autonomous', reserveFloorPct); } catch(e) {}
-      state.dayLastReserveRefresh = now;
-    }
-  }
+  // No periodic reserve refresh — the adaptive floor only controls when to stop exporting
+  // (via shouldExport condition). After export stops, self_consumption mode lets the house
+  // drain the battery naturally to 0% by stop time without locking in a reserve.
 }
 
 async function runCarSync(state, store, tokenData, settings, deviceId, phase1Reserve = 50, arbSettings = {}) {
