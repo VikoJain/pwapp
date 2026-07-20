@@ -198,7 +198,7 @@ function fmt2(n) { return String(n).padStart(2, '0'); }
 
 function findBestConsecutiveWindow(slots, maxSlots) {
   if (!slots.length || maxSlots < 1) return [];
-  const blocks = [], SLOT_KWH = 2.5, EFF = 0.9;
+  const blocks = [], SLOT_KWH = 5.0, EFF = 0.9; // 10kW discharge × 0.5hr
   let blk = [];
   for (const s of slots) {
     if (!blk.length) { blk.push(s); continue; }
@@ -258,7 +258,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       if (octCfg && octCfg.offPeakRate) state.dayOffPeakRate = parseFloat(octCfg.offPeakRate);
     } catch(e) {}
     const EFFICIENCY = 0.9;
-    const SLOT_KWH = 2.5; // 5kW × 0.5hr
+    const SLOT_KWH = 5.0; // 10kW discharge × 0.5hr
     const CHARGE_RATE_KW = 3.68;
     const pctForPlan = currentPctRaw >= 0 ? currentPctRaw : 0;
     const planFloorPct = ds.awayMode === false && ds.manualFloorPct !== undefined ? ds.manualFloorPct : 10;
@@ -284,8 +284,23 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       if (sellEnabled) {
         const arbTimes = new Set(arbWindow.map(s => s.validFrom));
         const forSell = sortedRates.filter(s => !arbTimes.has(s.validFrom));
-        const existingKwh = Math.max(0, (pctForPlan - planFloorPct) / 100 * 13.5);
-        const sellMaxSlots = Math.max(0, Math.floor(existingKwh / SLOT_KWH));
+        // Estimate battery level at the time of the first sell slot, accounting for house
+        // consumption between strategy build time and the slot. This prevents over-planning
+        // slots when the battery will have drained significantly by export time.
+        const firstSellSlot = forSell[0];
+        let estimatedBattAtSell = pctForPlan;
+        if (firstSellSlot) {
+          const fsd = new Date(new Date(firstSellSlot.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
+          const fsMins = fsd.getHours() * 60 + fsd.getMinutes();
+          const minsUntil = fsMins > minuteOfDay ? fsMins - minuteOfDay : Math.max(0, fsMins + 24 * 60 - minuteOfDay);
+          const cRate = state.dayConsumptionKwhPerHr > 0 ? state.dayConsumptionKwhPerHr : 0.3;
+          estimatedBattAtSell = Math.max(planFloorPct, pctForPlan - (minsUntil / 60 * cRate / 13.5 * 100));
+        }
+        const existingKwh = Math.max(0, (estimatedBattAtSell - planFloorPct) / 100 * 13.5);
+        // Use ceil so the algorithm can plan one partial slot — the runtime floor check stops
+        // export at the right point, but this lets findBestConsecutiveWindow pick the
+        // trailing higher-rate slots rather than starting from the lowest-rate one.
+        const sellMaxSlots = Math.max(0, Math.ceil(existingKwh / SLOT_KWH));
         sellWindow = sellMaxSlots > 0 ? findBestConsecutiveWindow(forSell, sellMaxSlots) : [];
       }
 
