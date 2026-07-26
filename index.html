@@ -1589,15 +1589,14 @@ async function loadRates() {
 function parseRates(results) {
   const slots = new Array(48).fill(null);
   results.forEach(r => {
-    const d = new Date(r.valid_from);
-    const idx = d.getHours()*2+(d.getMinutes()>=30?1:0);
+    const idx = ukSlotIndex(r.valid_from);
     if (idx>=0&&idx<48) slots[idx] = parseFloat(r.value_inc_vat.toFixed(2));
   });
   return slots;
 }
 
 function updateCurrentRate() {
-  const now=new Date(), idx=now.getHours()*2+(now.getMinutes()>=30?1:0);
+  const idx=ukSlotIndex(new Date());
   const cur=state.todayRates[idx], next=state.todayRates[idx+1]||(state.tomorrowRates[0]);
   if (cur!=null) document.getElementById('cur-rate').innerHTML = cur.toFixed(1)+'<span class="unit"> p/kWh</span>';
   if (next!=null) {
@@ -1639,7 +1638,7 @@ function switchDay(day) {
 }
 function calcEarnings() {
   const kwh=parseFloat(document.getElementById('est-kwh').value);
-  const now=new Date(), idx=now.getHours()*2+(now.getMinutes()>=30?1:0);
+  const idx=ukSlotIndex(new Date());
   const rate=state.todayRates[idx];
   if (!kwh||kwh<=0||rate===null||rate===undefined) { document.getElementById('est-result').textContent=''; return; }
   document.getElementById('est-result').textContent='Estimated: £'+(kwh*rate/100).toFixed(2)+' at '+rate.toFixed(1)+'p/kWh';
@@ -1707,7 +1706,7 @@ function renderImportChart(slots) {
   const colors = rates.map(r => r > 0 && r <= mid ? '#007aff' : '#636366');
   // Show current import rate badge
   const now = new Date();
-  const idx = now.getHours() * 2 + (now.getMinutes() >= 30 ? 1 : 0);
+  const idx = ukSlotIndex(now);
   const currentImportRate = rates[idx];
   const badge = document.getElementById('import-rate-badge');
   const rateNow = document.getElementById('import-rate-now');
@@ -1732,6 +1731,14 @@ function renderImportChart(slots) {
     }}}, scales: { x: { ticks: { font: { size: 9 }, color: '#8e8e93', maxRotation: 90, minRotation: 90, autoSkip: false }, grid: { display: false }, border: { display: false } }, y: { ticks: { font: { size: 10 }, color: '#8e8e93', callback: v => v + 'p' }, grid: { color: '#f2f2f7' }, border: { display: false } } } }
   });
   showTariffScheduleCard();
+}
+
+function ukNow() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/London' }));
+}
+function ukSlotIndex(date) {
+  const d = new Date(new Date(date).toLocaleString('en-US', { timeZone: 'Europe/London' }));
+  return d.getHours() * 2 + (d.getMinutes() >= 30 ? 1 : 0);
 }
 
 function slotToTime(slot) {
@@ -2106,7 +2113,7 @@ function renderStrategyStrip(data) {
   const dayOn = !!data.dayEnabled;
   if (dayOn) {
     const slots = data.dayExportSlots || [];
-    const futureSell = slots.filter(s => { const [h2,m2]=s.time.split(':').map(Number); return h2*60+m2 > new Date().getHours()*60+new Date().getMinutes(); });
+    const _ukn = ukNow(); const futureSell = slots.filter(s => { const [h2,m2]=s.time.split(':').map(Number); return h2*60+m2 > _ukn.getHours()*60+_ukn.getMinutes(); });
     if (data.dayCharging) parts.push('🟡 Day: charging for export');
     else if (data.dayExporting) parts.push('🟢 Day: exporting');
     else if (futureSell.length > 0) parts.push('⚪ Day: ' + futureSell.length + ' slot' + (futureSell.length !== 1 ? 's' : '') + ' from ' + futureSell[0].time);
