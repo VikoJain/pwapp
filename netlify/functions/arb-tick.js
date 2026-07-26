@@ -241,6 +241,8 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     state.dayConsumptionSamples = [];
     state.dayNonExportStart = null;
     state.dayChargeStartMins = null;
+    state.dayStats = { kwh: 0, earned: 0, avgRate: 0, importCost: 0, rateSum: 0, rateSamples: 0 };
+    state.dayExportSlots = [];
 
     const _londonDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
     const _londonTz = new Date().toLocaleTimeString('en-GB', { timeZone: 'Europe/London', timeZoneName: 'short' }).includes('BST') ? '+01:00' : '+00:00';
