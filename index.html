@@ -1300,6 +1300,15 @@ async function setReserve(pct) {
 // ── Export controls ───────────────────────────────────────
 async function setExportMode(enable) {
   if (!state.energySiteId) { toast('No Powerwall found.'); return; }
+  if (enable) {
+    // Switch to autonomous mode first — export only works in autonomous mode
+    await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/operation`, 'POST', { default_real_mode: 'autonomous', backup_reserve_percent: 0 });
+    await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/backup`, 'POST', { backup_reserve_percent: 0 });
+  } else {
+    // Restore self-powered mode when export stops so Tesla Savings mode doesn't interfere
+    await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/operation`, 'POST', { default_real_mode: 'self_consumption', backup_reserve_percent: 0 });
+    await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/backup`, 'POST', { backup_reserve_percent: 0 });
+  }
   return teslaRequest(`/api/1/energy_sites/${state.energySiteId}/grid_import_export`, 'POST', {
     disallow_charge_from_grid_with_solar_installed: false,
     customer_preferred_export_rule: enable ? 'battery_ok' : 'never'
