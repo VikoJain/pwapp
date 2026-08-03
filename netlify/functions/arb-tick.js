@@ -198,7 +198,7 @@ function fmt2(n) { return String(n).padStart(2, '0'); }
 
 function findBestConsecutiveWindow(slots, maxSlots) {
   if (!slots.length || maxSlots < 1) return [];
-  const blocks = [], SLOT_KWH = 5.0, EFF = 0.9; // 10kW discharge × 0.5hr
+  const blocks = [], SLOT_KWH = 2.5, EFF = 0.9; // 5kW discharge × 0.5hr
   let blk = [];
   for (const s of slots) {
     if (!blk.length) { blk.push(s); continue; }
@@ -221,13 +221,18 @@ function findBestConsecutiveWindow(slots, maxSlots) {
 async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId) {
   const ds = JSON.parse(await store.get('day_settings_' + deviceId) || 'null') ||
              JSON.parse(await store.get('holiday_settings_' + deviceId) || 'null') || {};
+  const octSettings = JSON.parse(await store.get('oct_settings_' + deviceId) || 'null') || {};
+  // Day window opens when the off-peak overnight rate ends — read from tariff tab settings
+  const _offPeakEnd = octSettings.offPeakEnd || '05:30';
+  const [_opEndH, _opEndM] = _offPeakEnd.split(':').map(Number);
+  const windowStartMins = (_opEndH || 5) * 60 + (_opEndM || 30);
   const stopHour = ds.stopHour !== undefined ? ds.stopHour : 23;
   const stopMinute = ds.stopMinute !== undefined ? ds.stopMinute : 0;
   const minMargin = ds.minMargin !== undefined ? parseFloat(ds.minMargin) : 2.0;
   const { access, apiBase, energySiteId: siteId } = tokenData;
   const minuteOfDay = h * 60 + m;
   const stopMinuteOfDay = stopHour * 60 + stopMinute;
-  const inWindow = minuteOfDay >= (5 * 60 + 30) && minuteOfDay < stopMinuteOfDay;
+  const inWindow = minuteOfDay >= windowStartMins && minuteOfDay < stopMinuteOfDay;
 
   // Build day strategy once per calendar day (before window guard so UI shows it at any time)
   const currentDateKey = new Date().toLocaleDateString('en-GB', { timeZone: 'Europe/London' });
@@ -246,7 +251,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
 
     const _londonDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
     const _londonTz = new Date().toLocaleTimeString('en-GB', { timeZone: 'Europe/London', timeZoneName: 'short' }).includes('BST') ? '+01:00' : '+00:00';
-    const windowStart = new Date(`${_londonDate}T05:30:00${_londonTz}`);
+    const windowStart = new Date(`${_londonDate}T${String(_opEndH || 5).padStart(2,'0')}:${String(_opEndM || 30).padStart(2,'0')}:00${_londonTz}`);
     const stopTimeDate = new Date(`${_londonDate}T${String(stopHour).padStart(2,'0')}:${String(stopMinute).padStart(2,'0')}:00${_londonTz}`);
     const [exportRates, importRate] = await Promise.all([
       getOctopusRatesForWindow(store, windowStart, stopTimeDate, deviceId),
@@ -254,18 +259,16 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     ]);
     state.dayImportRate = importRate;
     if (!importRate) log(state, 'Day: import rate unavailable — day costs will not be tracked. Check Settings and press Re-detect tariff.');
-    // Cache off-peak rate for sell-export cost attribution (read from stored tariff settings)
-    try {
-      const octCfg = JSON.parse(await store.get('oct_settings_' + deviceId) || 'null');
-      if (octCfg && octCfg.offPeakRate) state.dayOffPeakRate = parseFloat(octCfg.offPeakRate);
-    } catch(e) {}
+    // Cache off-peak rate for sell-export cost attribution
+    if (octSettings.offPeakRate) state.dayOffPeakRate = parseFloat(octSettings.offPeakRate);
     const EFFICIENCY = 0.9;
-    const SLOT_KWH = 5.0; // 10kW discharge × 0.5hr
+    const SLOT_KWH = 2.5; // 5kW discharge × 0.5hr
     const CHARGE_RATE_KW = 3.68;
     const pctForPlan = currentPctRaw >= 0 ? currentPctRaw : 0;
     const planFloorPct = ds.awayMode === false && ds.manualFloorPct !== undefined ? ds.manualFloorPct : 10;
     const usableKwh = Math.max(0, (100 - planFloorPct) / 100 * 13.5);
-    const maxSlotsFullBattery = Math.max(1, Math.floor(usableKwh / SLOT_KWH));
+    const cRateAtBuild = state.dayConsumptionKwhPerHr > 0 ? state.dayConsumptionKwhPerHr : 0.3;
+    const maxSlotsFullBattery = Math.max(1, Math.floor(usableKwh / (SLOT_KWH + cRateAtBuild * 0.5)));
     const sellEnabled = ds.sellEnabled !== false; // default true
     const arbEnabled = ds.arbEnabled !== false;   // default true
 
@@ -282,28 +285,33 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
         arbWindow = findBestConsecutiveWindow(profitable, maxSlotsFullBattery);
       }
 
-      // Sell strategy: export existing battery at best slots (excluding arb time)
+      // Sell strategy: pick highest-rate slots the battery can actually sustain.
+      // Greedy by rate: try best slots first, simulate forward chronologically to verify
+      // the battery stays above the floor after each export and house drain gap.
       if (sellEnabled) {
         const arbTimes = new Set(arbWindow.map(s => s.validFrom));
         const forSell = sortedRates.filter(s => !arbTimes.has(s.validFrom));
-        // Estimate battery level at the time of the first sell slot, accounting for house
-        // consumption between strategy build time and the slot. This prevents over-planning
-        // slots when the battery will have drained significantly by export time.
-        const firstSellSlot = forSell[0];
-        let estimatedBattAtSell = pctForPlan;
-        if (firstSellSlot) {
-          const fsd = new Date(new Date(firstSellSlot.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
-          const fsMins = fsd.getHours() * 60 + fsd.getMinutes();
-          const minsUntil = fsMins > minuteOfDay ? fsMins - minuteOfDay : Math.max(0, fsMins + 24 * 60 - minuteOfDay);
-          const cRate = state.dayConsumptionKwhPerHr > 0 ? state.dayConsumptionKwhPerHr : 0.3;
-          estimatedBattAtSell = Math.max(planFloorPct, pctForPlan - (minsUntil / 60 * cRate / 13.5 * 100));
+        const cRateForSell = state.dayConsumptionKwhPerHr > 0 ? state.dayConsumptionKwhPerHr : 0.3;
+        const exportPctPerSlot = SLOT_KWH / 13.5 * 100;
+        const sellCandidates = forSell.map(s => {
+          const _tsStr = new Date(s.validFrom).toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false });
+          const [_tsh, _tsm] = _tsStr.split(':').map(Number);
+          return { ...s, timeMin: _tsh * 60 + _tsm };
+        });
+        const selected = [];
+        for (const candidate of sellCandidates.slice().sort((a, b) => b.value - a.value)) {
+          const trial = [...selected, candidate].sort((a, b) => a.timeMin - b.timeMin);
+          let batt = pctForPlan, prevMin = minuteOfDay, valid = true;
+          for (const slot of trial) {
+            batt -= Math.max(0, (slot.timeMin - prevMin) / 60 * cRateForSell / 13.5 * 100);
+            if (batt <= planFloorPct) { valid = false; break; }
+            batt -= exportPctPerSlot;
+            if (batt < planFloorPct) { valid = false; break; }
+            prevMin = slot.timeMin + 30;
+          }
+          if (valid) selected.push(candidate);
         }
-        const existingKwh = Math.max(0, (estimatedBattAtSell - planFloorPct) / 100 * 13.5);
-        // Use ceil so the algorithm can plan one partial slot — the runtime floor check stops
-        // export at the right point, but this lets findBestConsecutiveWindow pick the
-        // trailing higher-rate slots rather than starting from the lowest-rate one.
-        const sellMaxSlots = Math.max(0, Math.ceil(existingKwh / SLOT_KWH));
-        sellWindow = sellMaxSlots > 0 ? findBestConsecutiveWindow(forSell, sellMaxSlots) : [];
+        sellWindow = selected.sort((a, b) => a.timeMin - b.timeMin);
       }
 
       // Combine all slots chronologically, tagged by type
@@ -313,9 +321,10 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       ].sort((a, b) => new Date(a.validFrom) - new Date(b.validFrom));
 
       dayExportSlots = combined.map(s => {
-        const ls = new Date(new Date(s.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
+        const _lsStr = new Date(s.validFrom).toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false });
+        const [_lsh, _lsm] = _lsStr.split(':').map(Number);
         return {
-          time: fmt2(ls.getHours()) + ':' + fmt2(ls.getMinutes()),
+          time: fmt2(_lsh) + ':' + fmt2(_lsm),
           rate: s.value,
           profit: s.slotType === 'arb' && importRate ? parseFloat(((s.value * EFFICIENCY) - importRate).toFixed(1)) : null,
           type: s.slotType
@@ -324,13 +333,15 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
 
       // Charge planning: only for arb window, accounts for sell depletion
       const futureArb = arbWindow.filter(s => {
-        const ls = new Date(new Date(s.validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
-        return ls.getHours() * 60 + ls.getMinutes() > minuteOfDay;
+        const _lsStr = new Date(s.validFrom).toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false });
+        const [_lsh, _lsm] = _lsStr.split(':').map(Number);
+        return _lsh * 60 + _lsm > minuteOfDay;
       });
 
       if (futureArb.length > 0 && importRate) {
-        const firstArbLS = new Date(new Date(futureArb[0].validFrom).toLocaleString('en-US', { timeZone: 'Europe/London' }));
-        const firstArbMins = firstArbLS.getHours() * 60 + firstArbLS.getMinutes();
+        const _faStr = new Date(futureArb[0].validFrom).toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false });
+        const [_fah, _fam] = _faStr.split(':').map(Number);
+        const firstArbMins = _fah * 60 + _fam;
         const consumptionRate = state.dayConsumptionKwhPerHr > 0 ? state.dayConsumptionKwhPerHr : 0.3;
         // After sell, battery is at floor; if no sell, estimate drain from now to arb
         const battAfterSell = sellWindow.length > 0 ? planFloorPct
@@ -344,7 +355,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
         if (dayNeedsCharge) {
           dayChargeSlot = {
             startTime: fmt2(Math.floor(chargeStartMins / 60)) + ':' + fmt2(chargeStartMins % 60),
-            endTime: fmt2(firstArbLS.getHours()) + ':' + fmt2(firstArbLS.getMinutes()),
+            endTime: fmt2(_fah) + ':' + fmt2(_fam),
             targetPct: 100,
             estimatedCostGbp: parseFloat((chargeNeededKwh * importRate / 100).toFixed(2))
           };
