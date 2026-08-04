@@ -244,6 +244,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     state.dayExporting = false;
     state.dayExportStart = null;
     state.dayConsumptionSamples = [];
+    state.dayConsumptionKwhPerHr = 0; // reset so planning uses default 0.3 — yesterday's rate is unreliable for today's long-horizon slot selection
     state.dayNonExportStart = null;
     state.dayChargeStartMins = null;
     state.dayStats = { kwh: 0, earned: 0, avgRate: 0, importCost: 0, rateSum: 0, rateSamples: 0 };
