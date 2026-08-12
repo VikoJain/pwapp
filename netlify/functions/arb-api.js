@@ -124,6 +124,7 @@ exports.handler = async (event) => {
           state.dayChargeSlot = null;
           state.dayNeedsCharge = false;
           state.dayChargeStartMins = null;
+          state.dayFloorApplied = false;
         } else {
           // Leave dayCharging/dayExporting flags as-is so arb-tick can detect and clean up
           // the Powerwall state on the next tick (sends API commands to restore normal mode)
@@ -145,6 +146,7 @@ exports.handler = async (event) => {
         // Force strategy recalculation on next tick when settings change
         const freshState = JSON.parse(await store.get(k('state')) || DEFAULT_STATE);
         freshState.dayRatesCacheDay = null;
+        freshState.dayFloorApplied = false;
         await store.set(k('state'), JSON.stringify(freshState));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
       }
