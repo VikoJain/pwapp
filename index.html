@@ -2915,8 +2915,7 @@ async function init() {
   // Start background auto-refresh every 30 seconds and sync SOE history from server
   if (state.teslaToken && state.energySiteId) { startAutoRefresh(); fetchServerSoeHistory(); }
 
-  // Restore arbitrage if it was enabled
-  if (state.arbEnabled && state.arbPhase === 0) scheduleArbitrage();
+  // Night mode is fully managed server-side by arb-tick.js — no client-side scheduling needed.
 
   // Restore timed export if it was active before the page reload
   if (state.teslaToken) {
