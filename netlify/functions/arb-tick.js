@@ -249,6 +249,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     state.dayChargeStartMins = null;
     state.dayStats = { kwh: 0, earned: 0, avgRate: 0, importCost: 0, rateSum: 0, rateSamples: 0 };
     state.dayExportSlots = [];
+    state.dayFloorApplied = false;
 
     const _londonDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
     const _londonTz = new Date().toLocaleTimeString('en-GB', { timeZone: 'Europe/London', timeZoneName: 'short' }).includes('BST') ? '+01:00' : '+00:00';
@@ -377,7 +378,9 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       state.dayEstimatedProfit = parseFloat((dayEstimatedRevenue - dayEstimatedImportCost).toFixed(2));
       const sellCount = sellWindow.length, arbCount = arbWindow.length;
       const floorLabel = ds.awayMode === false && ds.manualFloorPct !== undefined ? 'manual floor ' + planFloorPct + '%' : 'adaptive floor';
+      const slotTimeList = dayExportSlots.map(s => s.time).join(', ');
       log(state, 'Day: strategy — ' + (sellCount ? sellCount + ' sell' : '') + (sellCount && arbCount ? ' + ' : '') + (arbCount ? arbCount + ' arb' : '') + ' slot(s)' +
+        (slotTimeList ? ' [' + slotTimeList + ']' : '') +
         (dayNeedsCharge && dayChargeSlot ? ', charge ' + dayChargeSlot.startTime + '→' + dayChargeSlot.endTime : '') +
         (importRate ? ' · import ' + importRate.toFixed(1) + 'p' : ' · no import tariff') +
         ' · ' + floorLabel);
@@ -444,6 +447,19 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     reserveFloorPct = Math.min(95, Math.ceil((requiredKwh / 13.5) * 100));
   }
   state.dayReserveFloorPct = reserveFloorPct;
+
+  // One-time reserve floor enforcement when Day window opens (At Home / manual floor mode only).
+  // Sets Powerwall backup reserve so house loads cannot drain battery below the floor between
+  // export slots. Fires once per day after strategy is built; resets at midnight with the new-day
+  // reset. Away mode uses an adaptive floor (export-stop only) so 0% reserve is correct there.
+  if (!state.dayFloorApplied && !state.dayExporting && !state.dayCharging &&
+      ds.awayMode === false && ds.manualFloorPct !== undefined && reserveFloorPct > 0) {
+    try {
+      await setMode(access, apiBase, siteId, 'self_consumption', reserveFloorPct);
+      log(state, 'Day: floor reserve → ' + reserveFloorPct + '% (battery protected until export window)');
+    } catch(e) {}
+    state.dayFloorApplied = true;
+  }
 
   const exportSlots = state.dayExportSlots || [];
 
@@ -524,10 +540,11 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
   } else if (!shouldExport && state.dayExporting && !state.carSyncPausedExport) {
     try {
       await setExport(access, apiBase, siteId, false);
-      // Switch to self-powered mode with 0% reserve so the house naturally drains the
-      // remaining battery — no grid charging, no Tesla Savings mode exporting.
-      // The adaptive floor only controls when to stop exporting, not the Powerwall reserve.
-      await setMode(access, apiBase, siteId, 'self_consumption', 0);
+      // Restore self-powered mode. In manual floor mode, restore the floor reserve so house
+      // loads cannot drain the battery below the user's set floor after export ends.
+      // In Away mode, 0% reserve is correct — the adaptive floor only stops exports.
+      const _floorAfterExport = (ds.awayMode === false && ds.manualFloorPct !== undefined) ? reserveFloorPct : 0;
+      await setMode(access, apiBase, siteId, 'self_consumption', _floorAfterExport);
       state.dayExporting = false;
       if (state.dayExportStart) {
         const durationHrs = (now - state.dayExportStart.time) / 3600000;
@@ -1090,3 +1107,46 @@ exports.handler = async () => {
   } catch (e) {}
   return { statusCode: 200, body: 'OK' };
 };
+
+// Test utilities — only active when TEST_MODE=1 (no production impact)
+if (process.env.TEST_MODE === '1') {
+  module.exports._test = {
+    findBestConsecutiveWindow,
+
+    // Sell slot greedy simulation exposed for testing with direct timeMin values
+    planSellSlots: function({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForSell = 0.3 }) {
+      const SLOT_KWH = 2.5;
+      const exportPctPerSlot = SLOT_KWH / 13.5 * 100;
+      const selected = [];
+      for (const candidate of rates.slice().sort((a, b) => b.value - a.value)) {
+        const trial = [...selected, candidate].sort((a, b) => a.timeMin - b.timeMin);
+        let batt = pctForPlan, prevMin = minuteOfDay, valid = true;
+        for (const slot of trial) {
+          batt -= Math.max(0, (slot.timeMin - prevMin) / 60 * cRateForSell / 13.5 * 100);
+          if (batt <= planFloorPct) { valid = false; break; }
+          batt -= exportPctPerSlot;
+          if (batt < planFloorPct) { valid = false; break; }
+          prevMin = slot.timeMin + 30;
+        }
+        if (valid) selected.push(candidate);
+      }
+      return selected.sort((a, b) => a.timeMin - b.timeMin);
+    },
+
+    // Night cycle window trigger logic
+    isNightWindowActive: function(nowMins, startHour, startMinute, endHour, endMinute) {
+      const startMins = startHour * 60 + startMinute;
+      const endMins = endHour * 60 + endMinute;
+      return startMins > endMins
+        ? (nowMins >= startMins || nowMins < endMins)
+        : (nowMins >= startMins && nowMins < endMins);
+    },
+
+    // Phase 3/4 end detection (mirrors midnight-spanning logic in processUser)
+    isPhase3PastEnd: function(nowMins, endHour, endMinute, startHour, startMinute) {
+      const endMins = endHour * 60 + endMinute;
+      const startMins = startHour * 60 + startMinute;
+      return startMins > endMins ? (nowMins >= endMins && nowMins < startMins) : (nowMins >= endMins);
+    }
+  };
+}
