@@ -43,7 +43,7 @@ async function runAll() {
 
 // ── Load arb-tick.js test exports ─────────────────────────────────────────────
 process.env.TEST_MODE = '1';
-const { findBestConsecutiveWindow, planSellSlots, isNightWindowActive, isPhase3PastEnd }
+const { findBestConsecutiveWindow, planSellSlots, isNightWindowActive, isPhase3PastEnd, dayChargeStopMode, dayShouldCharge }
   = require('./netlify/functions/arb-tick')._test;
 
 // ── Mock @netlify/blobs for arb-api.js ────────────────────────────────────────
@@ -306,6 +306,47 @@ test('phase does NOT end at midnight (00:00)', () => {
 });
 test('phase does NOT end one minute before end (05:29)', () => {
   assert(!isPhase3PastEnd(5 * 60 + 29, 5, 30, 23, 30));
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+console.log('\n── 4b. Day charge-stop hold mode ──────────────────────────────────────────────────');
+
+// REGRESSION: on arb days the just-in-time charge could finish BEFORE the export slot.
+// The old code left the Powerwall in autonomous+0% during the gap, so Tesla's own
+// Time-Based Control self-exported up to an hour before our intended slot.
+test('charge finishes early (not yet in slot) → held in self_consumption 100% [REGRESSION: early export]', () => {
+  const r = dayChargeStopMode(false);
+  assertEqual(r.mode, 'self_consumption', 'must NOT be autonomous during the pre-slot gap');
+  assertEqual(r.reserve, 100, 'reserve must be 100% so the battery cannot discharge/export early');
+});
+test('charge stops because export slot has started → autonomous 0% ready to export', () => {
+  const r = dayChargeStopMode(true);
+  assertEqual(r.mode, 'autonomous');
+  assertEqual(r.reserve, 0);
+});
+
+// REGRESSION (13 Aug): battery reached 100% ~44 min before the 18:00 slot, then flapped
+// charge→100%→99%→charge every few minutes, thrashing the Powerwall mode until the slot and
+// leaving it in a state where the 18:00 export never triggered (needed manual intervention).
+const CHARGE_CTX = {
+  dayNeedsCharge: true, nextIsArb: true,
+  minuteOfDay: 17 * 60 + 20,           // 17:20, before the 18:00 slot
+  chargeStartMins: 15 * 60 + 10,        // 15:10
+  firstFutureExportMins: 18 * 60,       // 18:00
+  chargeTargetPct: 100, inExportSlot: false,
+};
+test('charges while below target and not yet held (17:20, 96%)', () => {
+  assert(dayShouldCharge({ ...CHARGE_CTX, dayChargeHold: false, pctInt: 96 }));
+});
+test('does NOT charge at exactly target (17:20, 100%)', () => {
+  assert(!dayShouldCharge({ ...CHARGE_CTX, dayChargeHold: false, pctInt: 100 }));
+});
+test('does NOT re-charge after a 1% dip once hold latched [REGRESSION: charge oscillation]', () => {
+  assert(!dayShouldCharge({ ...CHARGE_CTX, dayChargeHold: true, pctInt: 99 }),
+    'latch must suppress re-charge so the Powerwall does not flap until the slot');
+});
+test('does NOT charge once the export slot has started (18:00)', () => {
+  assert(!dayShouldCharge({ ...CHARGE_CTX, dayChargeHold: true, minuteOfDay: 18 * 60, inExportSlot: true, pctInt: 100 }));
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
