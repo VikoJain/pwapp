@@ -250,6 +250,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     state.dayStats = { kwh: 0, earned: 0, avgRate: 0, importCost: 0, rateSum: 0, rateSamples: 0 };
     state.dayExportSlots = [];
     state.dayFloorApplied = false;
+    state.dayChargeHold = false;
 
     const _londonDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
     const _londonTz = new Date().toLocaleTimeString('en-GB', { timeZone: 'Europe/London', timeZoneName: 'short' }).includes('BST') ? '+01:00' : '+00:00';
@@ -484,7 +485,12 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
   const nextFutureSlot = futureSlots[0];
   const nextIsArb = nextFutureSlot && nextFutureSlot.type === 'arb';
   const chargeStartMins = state.dayChargeStartMins || 0;
+  // dayChargeHold latch: once the battery has reached the charge target before the export
+  // slot, do NOT re-enter charging when it dips a percent or two. Without this the battery
+  // flaps charge→100%→stop→99%→charge every few minutes until the slot, thrashing the
+  // Powerwall mode and importing repeatedly from the grid. The hold mode keeps it ~full.
   const shouldCharge = !!(state.dayNeedsCharge &&
+    !state.dayChargeHold &&
     nextIsArb &&
     minuteOfDay >= chargeStartMins &&
     minuteOfDay < firstFutureExportMins &&
@@ -503,14 +509,25 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
 
   if (state.dayCharging && (!shouldCharge || inExportSlot)) {
     try {
-      await setMode(access, apiBase, siteId, 'autonomous', 0);
+      // If the export slot has begun, the export block below will enable export this same tick.
+      // If charging finished EARLY (battery hit target before the slot), we must NOT leave the
+      // Powerwall in autonomous+0% during the gap — Tesla's own Time-Based Control would then
+      // self-export at what IT considers peak, up to an hour before our intended slot. Hold the
+      // battery in self_consumption at 100% reserve (never exports) until the real slot starts.
+      if (inExportSlot) {
+        await setMode(access, apiBase, siteId, 'autonomous', 0);
+      } else {
+        // Target reached before the slot — hold full and latch so we don't re-charge on a dip.
+        await setMode(access, apiBase, siteId, 'self_consumption', 100);
+        state.dayChargeHold = true;
+      }
       state.dayCharging = false;
       if (state.dayChargeStart) {
         const kwhCharged = parseFloat((Math.max(0, pct - state.dayChargeStart.pct) / 100 * 13.5).toFixed(2));
         const importCostActual = parseFloat((kwhCharged * (state.dayImportRate || 0) / 100).toFixed(2));
         state.dayStats = state.dayStats || { kwh: 0, earned: 0, avgRate: 0, importCost: 0, rateSum: 0, rateSamples: 0 };
         state.dayStats.importCost = parseFloat(((state.dayStats.importCost || 0) + importCostActual).toFixed(2));
-        const reason = pctInt >= (state.dayChargeTargetPct || 100) ? 'target reached' : 'export window starting';
+        const reason = inExportSlot ? 'export window starting' : 'target reached — holding full until slot';
         log(state, 'Day: charge stopped (' + reason + ') — at ' + pctInt + '%, imported ~' + kwhCharged + ' kWh · £' + importCostActual);
         state.dayChargeStart = null;
       }
@@ -1147,6 +1164,30 @@ if (process.env.TEST_MODE === '1') {
       const endMins = endHour * 60 + endMinute;
       const startMins = startHour * 60 + startMinute;
       return startMins > endMins ? (nowMins >= endMins && nowMins < startMins) : (nowMins >= endMins);
+    },
+
+    // Day charge-stop mode selection (mirrors the charge-stop block in runDayMode).
+    // When charging finishes EARLY (target reached before the export slot), the Powerwall
+    // must be held in a non-exporting mode so Tesla's autonomous/TOU logic cannot self-export
+    // before our intended slot. Returns { mode, reserve }.
+    dayChargeStopMode: function(inExportSlot) {
+      return inExportSlot
+        ? { mode: 'autonomous', reserve: 0 }
+        : { mode: 'self_consumption', reserve: 100 };
+    },
+
+    // Just-in-time charge trigger (mirrors the shouldCharge condition in runDayMode).
+    // The dayChargeHold latch prevents re-charging once the target was reached before the
+    // slot — without it the battery flaps charge→100%→99%→charge every few minutes.
+    dayShouldCharge: function({ dayNeedsCharge, dayChargeHold, nextIsArb, minuteOfDay,
+                                chargeStartMins, firstFutureExportMins, pctInt, chargeTargetPct, inExportSlot }) {
+      return !!(dayNeedsCharge &&
+        !dayChargeHold &&
+        nextIsArb &&
+        minuteOfDay >= chargeStartMins &&
+        minuteOfDay < firstFutureExportMins &&
+        pctInt < (chargeTargetPct || 100) &&
+        !inExportSlot);
     }
   };
 }
