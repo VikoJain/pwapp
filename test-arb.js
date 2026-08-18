@@ -44,7 +44,7 @@ async function runAll() {
 // ── Load arb-tick.js test exports ─────────────────────────────────────────────
 process.env.TEST_MODE = '1';
 const { findBestConsecutiveWindow, planSellSlots, isNightWindowActive, isPhase3PastEnd, dayChargeStopMode, dayShouldCharge,
-        deriveDayStopTime, computeReserveFloorPct }
+        deriveDayStopTime, computeReserveFloorPct, EXPORT_KWH_PER_SLOT }
   = require('./netlify/functions/arb-tick')._test;
 
 // ── Mock @netlify/blobs for arb-api.js ────────────────────────────────────────
@@ -202,11 +202,11 @@ test('elevated dayConsumptionKwhPerHr (stale from yesterday) causes wrong slot s
 });
 
 test('respects 30% manual floor — stops selecting when battery would breach it', () => {
-  // Battery 50%, floor 30% = 20% headroom. Each export uses ~18.5%.
-  // Slots placed at strategy build time so house drain is near zero.
+  // Battery 50%, floor 30% = 20% headroom. Tests the floor mechanic at fine (2.5 kWh) granularity,
+  // so exportKwhPerSlot is pinned to 2.5 regardless of the production ~10kW default.
   // Slot 1 at 05:30: 50% → 31.5% — passes. Slot 2 at 06:00: 31.5% → 13% — below floor, fails.
   const rates = [slot(5, 30, 20), slot(6, 0, 20), slot(6, 30, 20)];
-  const result = planSellSlots({ rates, pctForPlan: 50, planFloorPct: 30, minuteOfDay: 330, cRateForSell: 0.3 });
+  const result = planSellSlots({ rates, pctForPlan: 50, planFloorPct: 30, minuteOfDay: 330, cRateForSell: 0.3, exportKwhPerSlot: 2.5 });
   assertEqual(result.length, 1, 'only 1 slot fits with 20% headroom above floor');
 });
 
@@ -220,11 +220,12 @@ test('returns empty when battery is already at the floor', () => {
 });
 
 test('combines non-consecutive slots across the day when battery allows', () => {
-  // With 10% floor and full battery there is room for both morning and evening
+  // With 10% floor and full battery there is room for both morning and evening.
+  // Pinned to 2.5 kWh/slot to test the non-consecutive combining mechanic at fine granularity.
   const result = planSellSlots({
     rates: [slot(7, 0, 15), slot(18, 0, 15)],
     pctForPlan: 100, planFloorPct: 10,
-    minuteOfDay: 330, cRateForSell: 0.3
+    minuteOfDay: 330, cRateForSell: 0.3, exportKwhPerSlot: 2.5
   });
   assertEqual(result.length, 2, 'should pick both non-consecutive slots');
 });
@@ -307,11 +308,61 @@ test('sell plan stops exporting early enough to survive to off-peak start [REGRE
   let batt = 100, prev = 17 * 60;
   for (const s of result) {
     batt -= (s.timeMin - prev) / 60 * 0.48 / 13.5 * 100;
-    batt -= 2.5 / 13.5 * 100;
+    batt -= EXPORT_KWH_PER_SLOT / 13.5 * 100;
     prev = s.timeMin + 30;
   }
   batt -= ((23 * 60 + 30) - prev) / 60 * 0.48 / 13.5 * 100; // house drain from last slot to off-peak
   assert(batt > 0, 'battery must survive to off-peak start (23:30), got ' + batt.toFixed(1) + '%');
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+console.log('\n── 2c. ~10kW export power concentrates on best slots [REGRESSION: 18 Aug] ─────');
+
+// 18 Aug: app exported from 17:30 and emptied the battery by 18:06 (Powerwall discharges at
+// ~10kW, not the 5kW assumed), so it missed the 24.3p peak at 18:30. With the real export power
+// the greedy books far fewer slots and, because it picks highest-rate first, lands on the peak.
+test('at ~10kW the sell plan skips 17:30 and lands on the 18:30 peak [REGRESSION: 18 Aug]', () => {
+  // The three profitable evening slots from that day, plus some lower daytime rates.
+  const rates = [
+    slot(12, 0, 14), slot(12, 30, 14.5), slot(16, 0, 20),
+    slot(17, 30, 23.2), slot(18, 0, 23.9), slot(18, 30, 24.3)
+  ];
+  const result = planSellSlots({
+    rates, pctForPlan: 90, planFloorPct: 10, minuteOfDay: 330,
+    cRateForSell: 0.25, offPeakStartMins: 23 * 60 + 30, isManualFloor: false,
+    windowStartMins: 330
+  });
+  assert(result.length >= 1, 'should still export something');
+  assert(result.some(s => s.timeMin === 18 * 60 + 30), 'must include the 24.3p peak slot (18:30)');
+  assert(!result.some(s => s.timeMin === 17 * 60 + 30), 'must NOT include the 17:30 slot that drained before the peak');
+  assert(result.every(s => s.value >= 23.9), 'every picked slot is one of the top-priced evening slots');
+});
+
+test('~10kW empties in ~1 slot, so 75% headroom yields at most 2 slots', () => {
+  // Full battery, 10% floor = 90% usable ≈ 12 kWh. At 5 kWh/slot that is ~2 slots, not 5.
+  const rates = [slot(17, 30, 22), slot(18, 0, 23), slot(18, 30, 24), slot(19, 0, 25), slot(19, 30, 21)];
+  const result = planSellSlots({
+    rates, pctForPlan: 100, planFloorPct: 10, minuteOfDay: 330,
+    cRateForSell: 0.15, offPeakStartMins: 23 * 60 + 30, isManualFloor: false, windowStartMins: 330
+  });
+  assert(result.length <= 2, 'battery only sustains ~2 full 5kWh slots, got ' + result.length);
+  assert(result.every(s => s.value >= 24), 'the slots it does pick are the highest-priced ones');
+});
+
+test('house drain is counted from window open, not from a just-after-midnight build time', () => {
+  // Strategy built at 00:01 (minuteOfDay=1) for an 18:00 slot. Without windowStartMins the sim would
+  // subtract ~18h of house drain (phantom — the overnight cycle holds the battery full until 05:30)
+  // and wrongly reject the slot. With windowStartMins=330 only ~12.5h of real drain is counted.
+  const rates = [slot(18, 0, 24)];
+  const withoutWindow = planSellSlots({
+    rates, pctForPlan: 100, planFloorPct: 10, minuteOfDay: 1, cRateForSell: 0.6, exportKwhPerSlot: 2.5
+  });
+  const withWindow = planSellSlots({
+    rates, pctForPlan: 100, planFloorPct: 10, minuteOfDay: 1, cRateForSell: 0.6, exportKwhPerSlot: 2.5,
+    windowStartMins: 330
+  });
+  assertEqual(withoutWindow.length, 0, 'phantom pre-window drain rejects the slot');
+  assertEqual(withWindow.length, 1, 'counting drain from window open keeps the slot');
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
