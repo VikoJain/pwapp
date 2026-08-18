@@ -218,7 +218,60 @@ function findBestConsecutiveWindow(slots, maxSlots) {
   return best;
 }
 
-async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId) {
+// Day-mode stop time = when the tariff's off-peak (cheap overnight) period begins, read from
+// the Tariff tab. This mirrors how the window OPEN time is derived from offPeakEnd, so there's
+// a single source of truth. Falls back to the legacy manual stop setting, then 23:00.
+function deriveDayStopTime(octSettings, ds) {
+  if (octSettings && octSettings.offPeakStart) {
+    const [h, m] = octSettings.offPeakStart.split(':').map(Number);
+    if (Number.isFinite(h) && Number.isFinite(m)) return { stopHour: h, stopMinute: m };
+  }
+  return {
+    stopHour: ds && ds.stopHour !== undefined ? ds.stopHour : 23,
+    stopMinute: ds && ds.stopMinute !== undefined ? ds.stopMinute : 0
+  };
+}
+
+// Reserve floor: the minimum battery % to hold back so the house can run until the tariff
+// off-peak start (when the cheap overnight charge takes over). Away/adaptive mode reserves
+// (hours until off-peak × measured house load × safety headroom); manual mode uses the user's
+// fixed floor. FLOOR_HEADROOM guards against the measured load under-estimating the evening.
+const FLOOR_HEADROOM = 1.25;
+function computeReserveFloorPct({ minuteOfDay, stopMinuteOfDay, measuredRate, isManualFloor, manualFloorPct, headroom = FLOOR_HEADROOM }) {
+  if (isManualFloor) return Math.min(95, Math.max(0, parseInt(manualFloorPct)));
+  const hoursToStop = Math.max(0, (stopMinuteOfDay - minuteOfDay) / 60);
+  const requiredKwh = hoursToStop * measuredRate * headroom;
+  return Math.min(95, Math.ceil((requiredKwh / 13.5) * 100));
+}
+
+// Greedy sell-slot selection: try the highest-priced slots first and keep each one only if,
+// after exporting it, the battery still holds enough to run the house until the tariff off-peak
+// start (or, in manual mode, stays above the user's fixed floor). rates need a numeric timeMin
+// (minutes past midnight). Simulates chronologically so inter-slot house drain is accounted for.
+function planSellSlots({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForSell = 0.5, offPeakStartMins = null, isManualFloor = false, headroom = FLOOR_HEADROOM }) {
+  const SLOT_KWH = 2.5;
+  const exportPctPerSlot = SLOT_KWH / 13.5 * 100;
+  // Reserve required at the moment a slot ends. Away/adaptive mode reserves enough to reach the
+  // off-peak start with headroom; manual mode (or no off-peak given) uses the fixed floor.
+  const reservePctAt = (slotEndMin) => (isManualFloor || offPeakStartMins == null)
+    ? planFloorPct
+    : Math.max(planFloorPct, (offPeakStartMins - slotEndMin) / 60 * cRateForSell * headroom / 13.5 * 100);
+  const selected = [];
+  for (const candidate of rates.slice().sort((a, b) => b.value - a.value)) {
+    const trial = [...selected, candidate].sort((a, b) => a.timeMin - b.timeMin);
+    let batt = pctForPlan, prevMin = minuteOfDay, valid = true;
+    for (const slot of trial) {
+      batt -= Math.max(0, (slot.timeMin - prevMin) / 60 * cRateForSell / 13.5 * 100);
+      batt -= exportPctPerSlot;
+      if (batt < reservePctAt(slot.timeMin + 30)) { valid = false; break; }
+      prevMin = slot.timeMin + 30;
+    }
+    if (valid) selected.push(candidate);
+  }
+  return selected.sort((a, b) => a.timeMin - b.timeMin);
+}
+
+async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId, loadPowerKw) {
   const ds = JSON.parse(await store.get('day_settings_' + deviceId) || 'null') ||
              JSON.parse(await store.get('holiday_settings_' + deviceId) || 'null') || {};
   const octSettings = JSON.parse(await store.get('oct_settings_' + deviceId) || 'null') || {};
@@ -226,8 +279,8 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
   const _offPeakEnd = octSettings.offPeakEnd || '05:30';
   const [_opEndH, _opEndM] = _offPeakEnd.split(':').map(Number);
   const windowStartMins = (_opEndH || 5) * 60 + (_opEndM || 30);
-  const stopHour = ds.stopHour !== undefined ? ds.stopHour : 23;
-  const stopMinute = ds.stopMinute !== undefined ? ds.stopMinute : 0;
+  // Window closes at the tariff off-peak start (single source of truth with the Tariff tab).
+  const { stopHour, stopMinute } = deriveDayStopTime(octSettings, ds);
   const minMargin = ds.minMargin !== undefined ? parseFloat(ds.minMargin) : 2.0;
   const { access, apiBase, energySiteId: siteId } = tokenData;
   const minuteOfDay = h * 60 + m;
@@ -243,9 +296,8 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     state.dayChargeStart = null;
     state.dayExporting = false;
     state.dayExportStart = null;
-    state.dayConsumptionSamples = [];
-    state.dayConsumptionKwhPerHr = 0; // reset so planning uses default 0.3 — yesterday's rate is unreliable for today's long-horizon slot selection
-    state.dayNonExportStart = null;
+    state.dayLoadSamples = []; // fresh live-load readings for today; dayLoadAvgPersisted carries across days
+    state.dayConsumptionKwhPerHr = 0; // repopulated from live load_power during today's ticks
     state.dayChargeStartMins = null;
     state.dayStats = { kwh: 0, earned: 0, avgRate: 0, importCost: 0, rateSum: 0, rateSamples: 0 };
     state.dayExportSlots = [];
@@ -268,9 +320,15 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     const SLOT_KWH = 2.5; // 5kW discharge × 0.5hr
     const CHARGE_RATE_KW = 3.68;
     const pctForPlan = currentPctRaw >= 0 ? currentPctRaw : 0;
-    const planFloorPct = ds.awayMode === false && ds.manualFloorPct !== undefined ? ds.manualFloorPct : 10;
+    const isManualFloor = ds.awayMode === false && ds.manualFloorPct !== undefined;
+    const planFloorPct = isManualFloor ? ds.manualFloorPct : 10;
+    // Realistic house load for planning: the average measured on previous days (persists across
+    // days, so a sunny full-battery day doesn't blind us), falling back to 0.5 kWh/hr for an
+    // occupied home rather than the old 0.3 standby figure.
+    const planConsumption = state.dayLoadAvgPersisted > 0 ? state.dayLoadAvgPersisted : 0.5;
+    const offPeakStartMins = stopMinuteOfDay; // window closes at the tariff off-peak start
     const usableKwh = Math.max(0, (100 - planFloorPct) / 100 * 13.5);
-    const cRateAtBuild = state.dayConsumptionKwhPerHr > 0 ? state.dayConsumptionKwhPerHr : 0.3;
+    const cRateAtBuild = planConsumption;
     const maxSlotsFullBattery = Math.max(1, Math.floor(usableKwh / (SLOT_KWH + cRateAtBuild * 0.5)));
     const sellEnabled = ds.sellEnabled !== false; // default true
     const arbEnabled = ds.arbEnabled !== false;   // default true
@@ -294,27 +352,16 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       if (sellEnabled) {
         const arbTimes = new Set(arbWindow.map(s => s.validFrom));
         const forSell = sortedRates.filter(s => !arbTimes.has(s.validFrom));
-        const cRateForSell = state.dayConsumptionKwhPerHr > 0 ? state.dayConsumptionKwhPerHr : 0.3;
-        const exportPctPerSlot = SLOT_KWH / 13.5 * 100;
+        const cRateForSell = planConsumption;
         const sellCandidates = forSell.map(s => {
           const _tsStr = new Date(s.validFrom).toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false });
           const [_tsh, _tsm] = _tsStr.split(':').map(Number);
           return { ...s, timeMin: _tsh * 60 + _tsm };
         });
-        const selected = [];
-        for (const candidate of sellCandidates.slice().sort((a, b) => b.value - a.value)) {
-          const trial = [...selected, candidate].sort((a, b) => a.timeMin - b.timeMin);
-          let batt = pctForPlan, prevMin = minuteOfDay, valid = true;
-          for (const slot of trial) {
-            batt -= Math.max(0, (slot.timeMin - prevMin) / 60 * cRateForSell / 13.5 * 100);
-            if (batt <= planFloorPct) { valid = false; break; }
-            batt -= exportPctPerSlot;
-            if (batt < planFloorPct) { valid = false; break; }
-            prevMin = slot.timeMin + 30;
-          }
-          if (valid) selected.push(candidate);
-        }
-        sellWindow = selected.sort((a, b) => a.timeMin - b.timeMin);
+        sellWindow = planSellSlots({
+          rates: sellCandidates, pctForPlan, planFloorPct, minuteOfDay,
+          cRateForSell, offPeakStartMins, isManualFloor
+        });
       }
 
       // Combine all slots chronologically, tagged by type
@@ -345,7 +392,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
         const _faStr = new Date(futureArb[0].validFrom).toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false });
         const [_fah, _fam] = _faStr.split(':').map(Number);
         const firstArbMins = _fah * 60 + _fam;
-        const consumptionRate = state.dayConsumptionKwhPerHr > 0 ? state.dayConsumptionKwhPerHr : 0.3;
+        const consumptionRate = planConsumption;
         // After sell, battery is at floor; if no sell, estimate drain from now to arb
         const battAfterSell = sellWindow.length > 0 ? planFloorPct
           : Math.max(0, pctForPlan - ((firstArbMins - minuteOfDay) / 60 * consumptionRate / 13.5 * 100));
@@ -414,39 +461,39 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
   const pctInt = Math.round(pct);
   const now = Date.now();
 
-  // Adaptive standby consumption tracking — used to maintain reserve floor until stop time
-  state.dayConsumptionSamples = state.dayConsumptionSamples || [];
-  if (!state.dayExporting && !state.dayCharging) {
-    if (state.dayNonExportStart) {
-      const elapsed = (now - state.dayNonExportStart.time) / 3600000;
-      if (elapsed >= 0.25) {
-        const dropPct = state.dayNonExportStart.pct - pct;
-        if (dropPct > 0 && dropPct < 30) {
-          const r = Math.max(0.02, Math.min(2.0, (dropPct / 100 * 13.5) / elapsed));
-          state.dayConsumptionSamples.push(parseFloat(r.toFixed(3)));
-          if (state.dayConsumptionSamples.length > 20) state.dayConsumptionSamples.shift();
-        }
-        state.dayNonExportStart = { pct, time: now };
-      }
-    } else {
-      state.dayNonExportStart = { pct, time: now };
-    }
-  } else {
-    state.dayNonExportStart = null;
+  // Adaptive house-load tracking — measured directly from Tesla's live load_power, which is
+  // already in the live_status response we fetch each tick (so zero extra Tesla calls). This
+  // replaces the old battery-%-drop inference, which saw nothing on sunny days when the battery
+  // stayed full and so fell back to an over-optimistic 0.3 kWh/hr default and drained the house.
+  state.dayLoadSamples = state.dayLoadSamples || [];
+  if (loadPowerKw != null && loadPowerKw >= 0) {
+    // Clamp a single reading so an oven/kettle spike or a glitch can't dominate the average.
+    const sample = Math.max(0.05, Math.min(3.0, loadPowerKw));
+    state.dayLoadSamples.push(parseFloat(sample.toFixed(3)));
+    if (state.dayLoadSamples.length > 15) state.dayLoadSamples.shift();
   }
-
-  const samples = state.dayConsumptionSamples;
-  const measuredRate = samples.length >= 3 ? samples.reduce((s, v) => s + v, 0) / samples.length : 0.3;
+  const loadSamples = state.dayLoadSamples;
+  // Until a few fresh readings arrive, fall back to the persisted cross-day average, then to
+  // 0.5 kWh/hr for an occupied home.
+  const persistedAvg = state.dayLoadAvgPersisted > 0 ? state.dayLoadAvgPersisted : 0.5;
+  const measuredRate = loadSamples.length >= 3
+    ? loadSamples.reduce((s, v) => s + v, 0) / loadSamples.length
+    : persistedAvg;
   state.dayConsumptionKwhPerHr = parseFloat(measuredRate.toFixed(3));
-
-  let reserveFloorPct;
-  if (ds.awayMode === false && ds.manualFloorPct !== undefined) {
-    reserveFloorPct = Math.min(95, Math.max(0, parseInt(ds.manualFloorPct)));
-  } else {
-    const hoursToStop = Math.max(0, (stopMinuteOfDay - minuteOfDay) / 60);
-    const requiredKwh = hoursToStop * measuredRate;
-    reserveFloorPct = Math.min(95, Math.ceil((requiredKwh / 13.5) * 100));
+  // Slow-moving average that persists across days so tomorrow's plan starts from a real number
+  // even if tomorrow is sunny and the battery never drops.
+  if (loadSamples.length >= 3) {
+    state.dayLoadAvgPersisted = parseFloat(
+      (state.dayLoadAvgPersisted > 0
+        ? state.dayLoadAvgPersisted * 0.8 + measuredRate * 0.2
+        : measuredRate).toFixed(3));
   }
+
+  const reserveFloorPct = computeReserveFloorPct({
+    minuteOfDay, stopMinuteOfDay, measuredRate,
+    isManualFloor: ds.awayMode === false && ds.manualFloorPct !== undefined,
+    manualFloorPct: ds.manualFloorPct
+  });
   state.dayReserveFloorPct = reserveFloorPct;
 
   // One-time reserve floor enforcement when Day window opens (At Home / manual floor mode only).
@@ -799,10 +846,13 @@ async function processUser(store, deviceId) {
   const nightOnlyWaiting = state.enabled && state.phase === 0 && !state.dayEnabled && !state.holidayEnabled && !carSyncEnabled && !hasPctExport && !pendingCmd
     && (_ltMins >= 360 && _ltMins < 1320); // 06:00–22:00 London
   let currentPct = -1;
+  let currentLoadKw = -1;
   if (!fullyIdle && !nightOnlyWaiting) {
     try {
       const live = await teslaGet(tokenData.access, tokenData.apiBase, `/api/1/energy_sites/${tokenData.energySiteId}/live_status`);
       currentPct = Math.round(live.response?.percentage_charged ?? -1);
+      // load_power is the live house load in WATTS — reused for the adaptive reserve floor.
+      currentLoadKw = live.response?.load_power != null ? live.response.load_power / 1000 : -1;
       if (currentPct >= 0) {
         const soeHistory = JSON.parse(await store.get('soe_history_' + deviceId) || '[]');
         const lastEntry = soeHistory[soeHistory.length - 1];
@@ -1097,7 +1147,7 @@ async function processUser(store, deviceId) {
   if ((state.dayEnabled || state.holidayEnabled) && state.phase === 0) {
     // Migrate legacy holidayEnabled to dayEnabled
     if (state.holidayEnabled && !state.dayEnabled) { state.dayEnabled = true; state.holidayEnabled = false; }
-    try { await runDayMode(state, store, tokenData, currentPct, h, m, deviceId); }
+    try { await runDayMode(state, store, tokenData, currentPct, h, m, deviceId, currentLoadKw); }
     catch (e) { log(state, 'Day error: ' + e.message); }
   }
 
@@ -1130,25 +1180,10 @@ if (process.env.TEST_MODE === '1') {
   module.exports._test = {
     findBestConsecutiveWindow,
 
-    // Sell slot greedy simulation exposed for testing with direct timeMin values
-    planSellSlots: function({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForSell = 0.3 }) {
-      const SLOT_KWH = 2.5;
-      const exportPctPerSlot = SLOT_KWH / 13.5 * 100;
-      const selected = [];
-      for (const candidate of rates.slice().sort((a, b) => b.value - a.value)) {
-        const trial = [...selected, candidate].sort((a, b) => a.timeMin - b.timeMin);
-        let batt = pctForPlan, prevMin = minuteOfDay, valid = true;
-        for (const slot of trial) {
-          batt -= Math.max(0, (slot.timeMin - prevMin) / 60 * cRateForSell / 13.5 * 100);
-          if (batt <= planFloorPct) { valid = false; break; }
-          batt -= exportPctPerSlot;
-          if (batt < planFloorPct) { valid = false; break; }
-          prevMin = slot.timeMin + 30;
-        }
-        if (valid) selected.push(candidate);
-      }
-      return selected.sort((a, b) => a.timeMin - b.timeMin);
-    },
+    // Real production functions exposed directly so tests can't drift from behaviour.
+    planSellSlots,
+    deriveDayStopTime,
+    computeReserveFloorPct,
 
     // Night cycle window trigger logic
     isNightWindowActive: function(nowMins, startHour, startMinute, endHour, endMinute) {
