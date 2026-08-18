@@ -43,7 +43,8 @@ async function runAll() {
 
 // ── Load arb-tick.js test exports ─────────────────────────────────────────────
 process.env.TEST_MODE = '1';
-const { findBestConsecutiveWindow, planSellSlots, isNightWindowActive, isPhase3PastEnd, dayChargeStopMode, dayShouldCharge }
+const { findBestConsecutiveWindow, planSellSlots, isNightWindowActive, isPhase3PastEnd, dayChargeStopMode, dayShouldCharge,
+        deriveDayStopTime, computeReserveFloorPct }
   = require('./netlify/functions/arb-tick')._test;
 
 // ── Mock @netlify/blobs for arb-api.js ────────────────────────────────────────
@@ -249,6 +250,68 @@ test('results are always sorted chronologically', () => {
   for (let i = 1; i < result.length; i++) {
     assert(result[i].timeMin > result[i - 1].timeMin, 'result must be in time order');
   }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+console.log('\n── 2b. Reserve floor targets tariff off-peak start [REGRESSION: 17 Aug drain] ─');
+
+test('day stop time derives from tariff offPeakStart', () => {
+  const r = deriveDayStopTime({ offPeakStart: '23:30' }, { stopHour: 23, stopMinute: 0 });
+  assertEqual(r.stopHour, 23, 'stop hour from tariff');
+  assertEqual(r.stopMinute, 30, 'stop minute from tariff — not the legacy 23:00');
+});
+
+test('day stop time falls back to legacy manual setting when tariff has no offPeakStart', () => {
+  const r = deriveDayStopTime({}, { stopHour: 22, stopMinute: 0 });
+  assertEqual(r.stopHour, 22);
+  assertEqual(r.stopMinute, 0);
+});
+
+test('day stop time falls back to 23:00 when nothing is set', () => {
+  const r = deriveDayStopTime({}, {});
+  assertEqual(r.stopHour, 23);
+  assertEqual(r.stopMinute, 0);
+});
+
+test('reserve floor reserves enough to reach off-peak start with headroom [REGRESSION: 17 Aug]', () => {
+  // 17 Aug: exports ended ~19:00, real load ~0.48 kWh/hr, off-peak start 23:30.
+  // Old code targeted 23:00 with no headroom → floor ~9% → battery died at 21:50.
+  // Need: (23:30-19:00)=4.5h × 0.48 × 1.25 ÷ 13.5 ≈ 20%.
+  const floor = computeReserveFloorPct({
+    minuteOfDay: 19 * 60, stopMinuteOfDay: 23 * 60 + 30, measuredRate: 0.48,
+    isManualFloor: false
+  });
+  assert(floor >= 18, 'floor should reserve ~20% to survive to 23:30, not the old ~9%: got ' + floor);
+});
+
+test('reserve floor shrinks toward off-peak start as time passes', () => {
+  const early = computeReserveFloorPct({ minuteOfDay: 19 * 60, stopMinuteOfDay: 23 * 60 + 30, measuredRate: 0.4, isManualFloor: false });
+  const late  = computeReserveFloorPct({ minuteOfDay: 22 * 60, stopMinuteOfDay: 23 * 60 + 30, measuredRate: 0.4, isManualFloor: false });
+  assert(late < early, 'less time to off-peak start means a lower floor');
+});
+
+test('reserve floor honours manual floor unchanged', () => {
+  const floor = computeReserveFloorPct({ minuteOfDay: 19 * 60, stopMinuteOfDay: 23 * 60 + 30, measuredRate: 0.48, isManualFloor: true, manualFloorPct: 30 });
+  assertEqual(floor, 30, 'manual mode uses the user floor verbatim');
+});
+
+test('sell plan stops exporting early enough to survive to off-peak start [REGRESSION: 17 Aug]', () => {
+  // Full battery, high evening rates every slot 17:30-21:00, load 0.48, off-peak start 23:30.
+  // The plan must NOT sell so many slots that the post-export battery can't cover 19:00→23:30.
+  const rates = [slot(17,30,25), slot(18,0,25), slot(18,30,25), slot(19,0,24), slot(19,30,24), slot(20,0,23), slot(20,30,23)];
+  const result = planSellSlots({
+    rates, pctForPlan: 100, planFloorPct: 10, minuteOfDay: 17 * 60,
+    cRateForSell: 0.48, offPeakStartMins: 23 * 60 + 30, isManualFloor: false
+  });
+  // Simulate the plan forward and confirm the battery reaches off-peak start above zero.
+  let batt = 100, prev = 17 * 60;
+  for (const s of result) {
+    batt -= (s.timeMin - prev) / 60 * 0.48 / 13.5 * 100;
+    batt -= 2.5 / 13.5 * 100;
+    prev = s.timeMin + 30;
+  }
+  batt -= ((23 * 60 + 30) - prev) / 60 * 0.48 / 13.5 * 100; // house drain from last slot to off-peak
+  assert(batt > 0, 'battery must survive to off-peak start (23:30), got ' + batt.toFixed(1) + '%');
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
