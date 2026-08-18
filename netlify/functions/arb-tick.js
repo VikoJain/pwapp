@@ -296,7 +296,8 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     state.dayChargeStart = null;
     state.dayExporting = false;
     state.dayExportStart = null;
-    state.dayLoadSamples = []; // fresh live-load readings for today; dayLoadAvgPersisted carries across days
+    state.dayLoadSum = 0;   // running total of today's live house-load readings (kWh/hr)
+    state.dayLoadCount = 0;  // reading count for today's average; dayLoadAvgPersisted carries across days
     state.dayConsumptionKwhPerHr = 0; // repopulated from live load_power during today's ticks
     state.dayChargeStartMins = null;
     state.dayStats = { kwh: 0, earned: 0, avgRate: 0, importCost: 0, rateSum: 0, rateSamples: 0 };
@@ -322,9 +323,10 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     const pctForPlan = currentPctRaw >= 0 ? currentPctRaw : 0;
     const isManualFloor = ds.awayMode === false && ds.manualFloorPct !== undefined;
     const planFloorPct = isManualFloor ? ds.manualFloorPct : 10;
-    // Realistic house load for planning: the average measured on previous days (persists across
-    // days, so a sunny full-battery day doesn't blind us), falling back to 0.5 kWh/hr for an
-    // occupied home rather than the old 0.3 standby figure.
+    // House load for planning: the average measured on previous days (persists across days, so a
+    // sunny full-battery day doesn't blind us). Falls back to 0.5 kWh/hr — a realistic always-on
+    // standby base load (fridge, freezer, networking, gateway) — because the old 0.3 default was
+    // too low for real homes and drained the house before the overnight cheap rate.
     const planConsumption = state.dayLoadAvgPersisted > 0 ? state.dayLoadAvgPersisted : 0.5;
     const offPeakStartMins = stopMinuteOfDay; // window closes at the tariff off-peak start
     const usableKwh = Math.max(0, (100 - planFloorPct) / 100 * 13.5);
@@ -465,24 +467,24 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
   // already in the live_status response we fetch each tick (so zero extra Tesla calls). This
   // replaces the old battery-%-drop inference, which saw nothing on sunny days when the battery
   // stayed full and so fell back to an over-optimistic 0.3 kWh/hr default and drained the house.
-  state.dayLoadSamples = state.dayLoadSamples || [];
+  // Accumulate a running average of TODAY's readings, from window-open (05:30) onwards, so by
+  // export time the reserve floor reflects the house's actual measured passive load across the
+  // whole day rather than any hardcoded guess.
   if (loadPowerKw != null && loadPowerKw >= 0) {
-    // Clamp a single reading so an oven/kettle spike or a glitch can't dominate the average.
+    // Clamp a single reading so a transient spike or glitch can't skew the day's average.
     const sample = Math.max(0.05, Math.min(3.0, loadPowerKw));
-    state.dayLoadSamples.push(parseFloat(sample.toFixed(3)));
-    if (state.dayLoadSamples.length > 15) state.dayLoadSamples.shift();
+    state.dayLoadSum = (state.dayLoadSum || 0) + sample;
+    state.dayLoadCount = (state.dayLoadCount || 0) + 1;
   }
-  const loadSamples = state.dayLoadSamples;
-  // Until a few fresh readings arrive, fall back to the persisted cross-day average, then to
-  // 0.5 kWh/hr for an occupied home.
+  const loadCount = state.dayLoadCount || 0;
+  // Seed from the persisted cross-day average until today has a few readings; only a brand-new
+  // install with no history at all ever falls through to the 0.5 kWh/hr cold-start default.
   const persistedAvg = state.dayLoadAvgPersisted > 0 ? state.dayLoadAvgPersisted : 0.5;
-  const measuredRate = loadSamples.length >= 3
-    ? loadSamples.reduce((s, v) => s + v, 0) / loadSamples.length
-    : persistedAvg;
+  const measuredRate = loadCount >= 3 ? state.dayLoadSum / loadCount : persistedAvg;
   state.dayConsumptionKwhPerHr = parseFloat(measuredRate.toFixed(3));
   // Slow-moving average that persists across days so tomorrow's plan starts from a real number
   // even if tomorrow is sunny and the battery never drops.
-  if (loadSamples.length >= 3) {
+  if (loadCount >= 3) {
     state.dayLoadAvgPersisted = parseFloat(
       (state.dayLoadAvgPersisted > 0
         ? state.dayLoadAvgPersisted * 0.8 + measuredRate * 0.2
