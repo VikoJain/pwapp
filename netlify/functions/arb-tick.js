@@ -198,7 +198,7 @@ function fmt2(n) { return String(n).padStart(2, '0'); }
 
 function findBestConsecutiveWindow(slots, maxSlots) {
   if (!slots.length || maxSlots < 1) return [];
-  const blocks = [], SLOT_KWH = 2.5, EFF = 0.9; // 5kW discharge × 0.5hr
+  const blocks = [], SLOT_KWH = EXPORT_KWH_PER_SLOT, EFF = 0.9;
   let blk = [];
   for (const s of slots) {
     if (!blk.length) { blk.push(s); continue; }
@@ -237,6 +237,15 @@ function deriveDayStopTime(octSettings, ds) {
 // (hours until off-peak × measured house load × safety headroom); manual mode uses the user's
 // fixed floor. FLOOR_HEADROOM guards against the measured load under-estimating the evening.
 const FLOOR_HEADROOM = 1.25;
+
+// Powerwall grid-export (discharge) power. A PW3 / 2×PW2 install dumps to grid at ~10 kW, i.e.
+// ~5 kWh per 30-min slot — NOT the 5 kW / 2.5 kWh a single PW2 does. Getting this right matters:
+// the sell planner uses it to work out how many slots the battery can fill. Underestimate it and
+// it over-books slots and opens export too early (draining before the highest-priced slot); the
+// battery empties in ~1 slot, so with the correct figure the greedy naturally concentrates on the
+// single best-priced slot (or the top 2 if there's charge for it). Could become a per-user setting.
+const EXPORT_KW = 10;
+const EXPORT_KWH_PER_SLOT = EXPORT_KW * 0.5;
 function computeReserveFloorPct({ minuteOfDay, stopMinuteOfDay, measuredRate, isManualFloor, manualFloorPct, headroom = FLOOR_HEADROOM }) {
   if (isManualFloor) return Math.min(95, Math.max(0, parseInt(manualFloorPct)));
   const hoursToStop = Math.max(0, (stopMinuteOfDay - minuteOfDay) / 60);
@@ -248,9 +257,12 @@ function computeReserveFloorPct({ minuteOfDay, stopMinuteOfDay, measuredRate, is
 // after exporting it, the battery still holds enough to run the house until the tariff off-peak
 // start (or, in manual mode, stays above the user's fixed floor). rates need a numeric timeMin
 // (minutes past midnight). Simulates chronologically so inter-slot house drain is accounted for.
-function planSellSlots({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForSell = 0.5, offPeakStartMins = null, isManualFloor = false, headroom = FLOOR_HEADROOM }) {
-  const SLOT_KWH = 2.5;
-  const exportPctPerSlot = SLOT_KWH / 13.5 * 100;
+function planSellSlots({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForSell = 0.5, offPeakStartMins = null, isManualFloor = false, headroom = FLOOR_HEADROOM, exportKwhPerSlot = EXPORT_KWH_PER_SLOT, windowStartMins = null }) {
+  const exportPctPerSlot = exportKwhPerSlot / 13.5 * 100;
+  // House drain is only counted from when the day window opens (the overnight cycle holds the
+  // battery ~full until then), so a strategy built just after midnight doesn't phantom-drain the
+  // battery for the pre-window hours. Falls back to minuteOfDay when no window start is given.
+  const drainStartMin = windowStartMins != null ? Math.max(minuteOfDay, windowStartMins) : minuteOfDay;
   // Reserve required at the moment a slot ends. Away/adaptive mode reserves enough to reach the
   // off-peak start with headroom; manual mode (or no off-peak given) uses the fixed floor.
   const reservePctAt = (slotEndMin) => (isManualFloor || offPeakStartMins == null)
@@ -259,7 +271,7 @@ function planSellSlots({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForS
   const selected = [];
   for (const candidate of rates.slice().sort((a, b) => b.value - a.value)) {
     const trial = [...selected, candidate].sort((a, b) => a.timeMin - b.timeMin);
-    let batt = pctForPlan, prevMin = minuteOfDay, valid = true;
+    let batt = pctForPlan, prevMin = drainStartMin, valid = true;
     for (const slot of trial) {
       batt -= Math.max(0, (slot.timeMin - prevMin) / 60 * cRateForSell / 13.5 * 100);
       batt -= exportPctPerSlot;
@@ -318,7 +330,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     // Cache off-peak rate for sell-export cost attribution
     if (octSettings.offPeakRate) state.dayOffPeakRate = parseFloat(octSettings.offPeakRate);
     const EFFICIENCY = 0.9;
-    const SLOT_KWH = 2.5; // 5kW discharge × 0.5hr
+    const SLOT_KWH = EXPORT_KWH_PER_SLOT; // ~10kW export discharge × 0.5hr (see EXPORT_KW)
     const CHARGE_RATE_KW = 3.68;
     const pctForPlan = currentPctRaw >= 0 ? currentPctRaw : 0;
     const isManualFloor = ds.awayMode === false && ds.manualFloorPct !== undefined;
@@ -362,7 +374,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
         });
         sellWindow = planSellSlots({
           rates: sellCandidates, pctForPlan, planFloorPct, minuteOfDay,
-          cRateForSell, offPeakStartMins, isManualFloor
+          cRateForSell, offPeakStartMins, isManualFloor, windowStartMins
         });
       }
 
@@ -1186,6 +1198,7 @@ if (process.env.TEST_MODE === '1') {
     planSellSlots,
     deriveDayStopTime,
     computeReserveFloorPct,
+    EXPORT_KWH_PER_SLOT,
 
     // Night cycle window trigger logic
     isNightWindowActive: function(nowMins, startHour, startMinute, endHour, endMinute) {
