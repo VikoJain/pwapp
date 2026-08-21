@@ -263,9 +263,16 @@ function planSellSlots({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForS
   // battery ~full until then), so a strategy built just after midnight doesn't phantom-drain the
   // battery for the pre-window hours. Falls back to minuteOfDay when no window start is given.
   const drainStartMin = windowStartMins != null ? Math.max(minuteOfDay, windowStartMins) : minuteOfDay;
-  // Reserve required at the moment a slot ends. Away/adaptive mode reserves enough to reach the
-  // off-peak start with headroom; manual mode (or no off-peak given) uses the fixed floor.
-  const reservePctAt = (slotEndMin) => (isManualFloor || offPeakStartMins == null)
+  // Reserve required at the moment a slot ends. In BOTH modes the house keeps drawing from the
+  // battery after the export slot (At-home self-consumption above the floor, Away adaptive floor),
+  // so we reserve enough to run the house until the tariff off-peak start without breaching the
+  // floor. This is what makes the planner sell only the genuine surplus: an early-day slot must
+  // leave nearly a full battery behind (many hours of house load still to come), so it is rejected
+  // in favour of a real end-of-day surplus — selling early would just force the house onto grid
+  // import at the day rate for the rest of the day. The manual floor is always honoured as the hard
+  // minimum via Math.max. Falls back to the flat floor only when no off-peak start is supplied.
+  // (isManualFloor no longer branches this — the floor is the minimum, not a cap on the reserve.)
+  const reservePctAt = (slotEndMin) => (offPeakStartMins == null)
     ? planFloorPct
     : Math.max(planFloorPct, (offPeakStartMins - slotEndMin) / 60 * cRateForSell * headroom / 13.5 * 100);
   const selected = [];
