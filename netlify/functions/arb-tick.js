@@ -253,41 +253,59 @@ function computeReserveFloorPct({ minuteOfDay, stopMinuteOfDay, measuredRate, is
   return Math.min(95, Math.ceil((requiredKwh / 13.5) * 100));
 }
 
-// Greedy sell-slot selection: try the highest-priced slots first and keep each one only if,
-// after exporting it, the battery still holds enough to run the house until the tariff off-peak
-// start (or, in manual mode, stays above the user's fixed floor). rates need a numeric timeMin
-// (minutes past midnight). Simulates chronologically so inter-slot house drain is accounted for.
+// Sell-slot selection — sell the battery's genuine excess at the HIGHEST export price(s), with
+// partial-slot precision. rates need a numeric timeMin (minutes past midnight). Each returned slot
+// carries an `exportKwh` estimate; the last one usually runs partial (the runtime stops mid-slot the
+// moment the battery reaches the floor, so a 2kWh excess exports for ~12 min, not the full 30).
+//
+// Two modes, differing only in where the floor sits:
+//  • At-home (isManualFloor): export straight down to the user's fixed manual floor. The house runs
+//    off the grid below the floor afterwards — the user's explicit choice.
+//  • Away/adaptive: the floor is the battery estimated to still be needed to reach the tariff
+//    off-peak start (23:30), so it never drains to empty before the cheap overnight charge.
 function planSellSlots({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForSell = 0.5, offPeakStartMins = null, isManualFloor = false, headroom = FLOOR_HEADROOM, exportKwhPerSlot = EXPORT_KWH_PER_SLOT, windowStartMins = null }) {
+  if (!rates || !rates.length) return [];
   const exportPctPerSlot = exportKwhPerSlot / 13.5 * 100;
   // House drain is only counted from when the day window opens (the overnight cycle holds the
   // battery ~full until then), so a strategy built just after midnight doesn't phantom-drain the
   // battery for the pre-window hours. Falls back to minuteOfDay when no window start is given.
   const drainStartMin = windowStartMins != null ? Math.max(minuteOfDay, windowStartMins) : minuteOfDay;
-  // Reserve required at the moment a slot ends. In BOTH modes the house keeps drawing from the
-  // battery after the export slot (At-home self-consumption above the floor, Away adaptive floor),
-  // so we reserve enough to run the house until the tariff off-peak start without breaching the
-  // floor. This is what makes the planner sell only the genuine surplus: an early-day slot must
-  // leave nearly a full battery behind (many hours of house load still to come), so it is rejected
-  // in favour of a real end-of-day surplus — selling early would just force the house onto grid
-  // import at the day rate for the rest of the day. The manual floor is always honoured as the hard
-  // minimum via Math.max. Falls back to the flat floor only when no off-peak start is supplied.
-  // (isManualFloor no longer branches this — the floor is the minimum, not a cap on the reserve.)
-  const reservePctAt = (slotEndMin) => (offPeakStartMins == null)
+  // Reserve the battery must still hold when a slot ENDS (see mode notes above). The flat manual
+  // floor for At-home; for Away, enough to run the house to the off-peak start, with the floor as a
+  // hard minimum. Falls back to the flat floor when no off-peak start is supplied.
+  const reservePctAt = (slotEndMin) => (isManualFloor || offPeakStartMins == null)
     ? planFloorPct
     : Math.max(planFloorPct, (offPeakStartMins - slotEndMin) / 60 * cRateForSell * headroom / 13.5 * 100);
-  const selected = [];
-  for (const candidate of rates.slice().sort((a, b) => b.value - a.value)) {
-    const trial = [...selected, candidate].sort((a, b) => a.timeMin - b.timeMin);
-    let batt = pctForPlan, prevMin = drainStartMin, valid = true;
-    for (const slot of trial) {
-      batt -= Math.max(0, (slot.timeMin - prevMin) / 60 * cRateForSell / 13.5 * 100);
-      batt -= exportPctPerSlot;
-      if (batt < reservePctAt(slot.timeMin + 30)) { valid = false; break; }
-      prevMin = slot.timeMin + 30;
-    }
-    if (valid) selected.push(candidate);
+  const battAt = (mins) => pctForPlan - Math.max(0, (mins - drainStartMin) / 60 * cRateForSell / 13.5 * 100);
+
+  // Size the export to the genuine excess, measured at the SINGLE highest-priced slot (we always
+  // sell at the best price): whatever sits above the reserve there. No excess → sell nothing.
+  // Tie-break equal prices by LATER slot first: on a flat/tied-price day, selling later is strictly
+  // better (same revenue, but the house runs off the battery through the day first instead of being
+  // pushed onto the grid by an early-morning drain).
+  const byPrice = rates.slice().sort((a, b) => (b.value - a.value) || (b.timeMin - a.timeMin));
+  const anchor = byPrice[0];
+  const excessPct = battAt(anchor.timeMin) - reservePctAt(anchor.timeMin + 30);
+  if (excessPct <= 0) return [];
+  // The Powerwall exports at ~10kW, so one 30-min slot shifts up to `exportKwhPerSlot`. Book as many
+  // of the highest-priced slots as it takes to move the excess; the last one runs partial.
+  const slotsNeeded = Math.min(byPrice.length, Math.max(1, Math.ceil(excessPct / exportPctPerSlot)));
+  const chosen = byPrice.slice(0, slotsNeeded).sort((a, b) => a.timeMin - b.timeMin);
+
+  // Walk the chosen slots chronologically to estimate each one's actual export (partial allowed),
+  // dropping any that would move a negligible tail below MIN_EXPORT_KWH.
+  const MIN_EXPORT_KWH = 0.25;
+  let batt = pctForPlan, prevMin = drainStartMin;
+  const out = [];
+  for (const slot of chosen) {
+    batt -= Math.max(0, (slot.timeMin - prevMin) / 60 * cRateForSell / 13.5 * 100);
+    const exportPct = Math.max(0, Math.min(exportPctPerSlot, batt - reservePctAt(slot.timeMin + 30)));
+    batt -= exportPct;
+    prevMin = slot.timeMin + 30;
+    const exportKwh = parseFloat((exportPct / 100 * 13.5).toFixed(2));
+    if (exportKwh >= MIN_EXPORT_KWH) out.push({ ...slot, exportKwh });
   }
-  return selected.sort((a, b) => a.timeMin - b.timeMin);
+  return out;
 }
 
 async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId, loadPowerKw) {
@@ -394,11 +412,15 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       dayExportSlots = combined.map(s => {
         const _lsStr = new Date(s.validFrom).toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false });
         const [_lsh, _lsm] = _lsStr.split(':').map(Number);
+        // Estimated export for this slot: sell slots carry a partial exportKwh; arb runs a full slot.
+        const estKwh = s.slotType === 'arb' ? SLOT_KWH : (s.exportKwh || 0);
         return {
           time: fmt2(_lsh) + ':' + fmt2(_lsm),
           rate: s.value,
           profit: s.slotType === 'arb' && importRate ? parseFloat(((s.value * EFFICIENCY) - importRate).toFixed(1)) : null,
-          type: s.slotType
+          type: s.slotType,
+          estKwh: parseFloat(estKwh.toFixed(2)),
+          estMins: Math.min(30, Math.max(1, Math.round(estKwh / EXPORT_KW * 60)))
         };
       });
 
@@ -434,7 +456,9 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
         }
       }
 
-      const sellRevenue = sellWindow.reduce((sum, s) => sum + s.value * EFFICIENCY * SLOT_KWH, 0) / 100;
+      // Sell revenue uses each slot's estimated partial export (exportKwh); arb still assumes a full
+      // slot (it force-charges to 100% first so a full 5kWh discharge is available).
+      const sellRevenue = sellWindow.reduce((sum, s) => sum + s.value * EFFICIENCY * (s.exportKwh || 0), 0) / 100;
       const arbRevenue = arbWindow.reduce((sum, s) => sum + s.value * EFFICIENCY * SLOT_KWH, 0) / 100;
       dayEstimatedRevenue = parseFloat((sellRevenue + arbRevenue).toFixed(2));
 
@@ -447,7 +471,8 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       state.dayEstimatedProfit = parseFloat((dayEstimatedRevenue - dayEstimatedImportCost).toFixed(2));
       const sellCount = sellWindow.length, arbCount = arbWindow.length;
       const floorLabel = ds.awayMode === false && ds.manualFloorPct !== undefined ? 'manual floor ' + planFloorPct + '%' : 'adaptive floor';
-      const slotTimeList = dayExportSlots.map(s => s.time).join(', ');
+      // Show each slot with its estimated partial export, e.g. "18:30 (~2.3kWh/14m)".
+      const slotTimeList = dayExportSlots.map(s => s.time + ' (~' + s.estKwh + 'kWh/' + s.estMins + 'm)').join(', ');
       log(state, 'Day: strategy — ' + (sellCount ? sellCount + ' sell' : '') + (sellCount && arbCount ? ' + ' : '') + (arbCount ? arbCount + ' arb' : '') + ' slot(s)' +
         (slotTimeList ? ' [' + slotTimeList + ']' : '') +
         (dayNeedsCharge && dayChargeSlot ? ', charge ' + dayChargeSlot.startTime + '→' + dayChargeSlot.endTime : '') +
