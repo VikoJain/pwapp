@@ -366,6 +366,53 @@ test('house drain is counted from window open, not from a just-after-midnight bu
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
+console.log('\n── 2d. At-home mode sells only genuine surplus [REGRESSION: 21 Aug] ──────────');
+
+// 21 Aug: At-home mode (manual 30% floor) sold at 06:30 @16.5p — the earliest slot, not the best.
+// Root cause: the reserve check only required the battery to be AT the floor the instant a slot
+// ended, ignoring that the house keeps draining it afterwards until the overnight cheap rate at
+// 23:30. So an early-morning slot looked fine even though selling then forced the house onto grid
+// import (27.4p) for the rest of the day (a net loss). With the house load (~0.55 kWh/hr) consuming
+// the whole usable capacity there is NO genuine surplus, so the planner must sell nothing.
+test('at-home mode does not sell an early slot that would force daytime grid import [REGRESSION: 21 Aug]', () => {
+  const morning = [slot(6, 0, 15.5), slot(6, 30, 16.5), slot(7, 0, 16.0)];
+  const evening = [slot(18, 0, 22.8), slot(18, 30, 23.3), slot(19, 0, 22.5)];
+  const result = planSellSlots({
+    rates: [...morning, ...evening],
+    pctForPlan: 100, planFloorPct: 30, minuteOfDay: 330,
+    cRateForSell: 0.55, offPeakStartMins: 23 * 60 + 30, isManualFloor: true,
+    windowStartMins: 330
+  });
+  assert(!result.some(s => s.timeMin === 6 * 60 + 30), 'must NOT sell the 06:30 morning slot');
+  assertEqual(result.length, 0, 'house load consumes the whole battery — no genuine surplus to sell');
+});
+
+// Complement: the manual floor is still honoured as a hard minimum, and on a LIGHT-load day the
+// same floor frees up a genuine surplus that IS sold — concentrated on the highest-priced slot.
+test('at-home mode with light load still captures the evening peak surplus above the manual floor', () => {
+  const morning = [slot(6, 0, 15.5), slot(6, 30, 16.5), slot(7, 0, 16.0)];
+  const evening = [slot(18, 0, 22.8), slot(18, 30, 23.3), slot(19, 0, 22.5)];
+  const result = planSellSlots({
+    rates: [...morning, ...evening],
+    pctForPlan: 100, planFloorPct: 30, minuteOfDay: 330,
+    cRateForSell: 0.15, offPeakStartMins: 23 * 60 + 30, isManualFloor: true,
+    windowStartMins: 330
+  });
+  assert(result.length >= 1, 'a genuine surplus exists on a light-load day');
+  assert(result.every(s => s.value >= 22.8), 'sold at the top evening rates, not the cheap morning');
+  assert(!result.some(s => s.timeMin < 12 * 60), 'never the low-value morning slots');
+  // Simulate forward and confirm the plan never plans the battery below the 30% manual floor.
+  let batt = 100, prev = 330;
+  for (const s of result) {
+    batt -= (s.timeMin - prev) / 60 * 0.15 / 13.5 * 100;
+    batt -= EXPORT_KWH_PER_SLOT / 13.5 * 100;
+    prev = s.timeMin + 30;
+  }
+  batt -= ((23 * 60 + 30) - prev) / 60 * 0.15 / 13.5 * 100; // house drain to off-peak start
+  assert(batt >= 30, 'manual 30% floor honoured all the way to off-peak start, got ' + batt.toFixed(1) + '%');
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
 console.log('\n── 3. Night cycle window detection ───────────────────────────────────────');
 
 // Midnight-spanning: start=23:30, end=05:30
