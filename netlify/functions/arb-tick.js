@@ -253,6 +253,37 @@ function computeReserveFloorPct({ minuteOfDay, stopMinuteOfDay, measuredRate, is
   return Math.min(95, Math.ceil((requiredKwh / 13.5) * 100));
 }
 
+// Tesla data-call gate (PURE — unit-tested). Decides whether a cron tick fetches live_status, which
+// is ~99% of Tesla API cost. Full 2-min cadence only when something is happening or imminent (active
+// export/charge/command, in/near an export slot or the just-in-time charge, or the overnight cycle
+// window); a ~15-min heartbeat while merely holding a reserve (keeps the load average + SOE chart
+// alive); nothing when fully idle or when Night mode alone is waiting through the daytime dead zone.
+// ltMins = minutes past midnight (London). Returns { poll, needFine, reason }.
+function shouldFetchLive({ enabled, phase, dayEnabled, holidayEnabled, carSyncEnabled, hasPctExport,
+  pendingCmd, timedExportActive, dayExporting, dayCharging, dayExportSlots, dayNeedsCharge,
+  dayChargeStartMins, ltMins, lastLivePoll, nowMs, holdPollMs = 15 * 60 * 1000, slotBuffer = 6 }) {
+  const armed = enabled || dayEnabled || holidayEnabled || carSyncEnabled || hasPctExport || pendingCmd || phase !== 0;
+  if (!armed) return { poll: false, needFine: false, reason: 'idle' };
+  const nightOnlyWaiting = enabled && phase === 0 && !dayEnabled && !holidayEnabled && !carSyncEnabled
+    && !hasPctExport && !pendingCmd && (ltMins >= 360 && ltMins < 1320); // 06:00–22:00 London
+  if (nightOnlyWaiting) return { poll: false, needFine: false, reason: 'night-waiting' };
+  const activeNow = phase !== 0 || dayExporting || dayCharging || hasPctExport || pendingCmd || !!timedExportActive;
+  let dayImminent = false;
+  if (dayEnabled) {
+    for (const s of (dayExportSlots || [])) {
+      const [sh, sm] = String(s.time).split(':').map(Number);
+      const st = sh * 60 + sm;
+      if (ltMins >= st - slotBuffer && ltMins < st + 30) { dayImminent = true; break; }
+    }
+    if (!dayImminent && dayNeedsCharge && dayChargeStartMins != null && ltMins >= dayChargeStartMins - slotBuffer) dayImminent = true;
+  }
+  const nightImminent = enabled && phase === 0 && (ltMins >= 1400 || ltMins < 360); // 23:20→06:00
+  const needFine = activeNow || dayImminent || nightImminent;
+  if (needFine) return { poll: true, needFine: true, reason: 'active' };
+  if (lastLivePoll && (nowMs - lastLivePoll < holdPollMs)) return { poll: false, needFine: false, reason: 'hold-throttled' };
+  return { poll: true, needFine: false, reason: 'heartbeat' };
+}
+
 // Sell-slot selection — sell the battery's genuine excess at the HIGHEST export price(s), with
 // partial-slot precision. rates need a numeric timeMin (minutes past midnight). Each returned slot
 // carries an `exportKwh` estimate; the last one usually runs partial (the runtime stops mid-slot the
@@ -882,20 +913,25 @@ async function processUser(store, deviceId) {
   const pctExport = JSON.parse(await store.get('pct_export_' + deviceId) || 'null');
   const hasPctExport = pctExport && pctExport.targetPct !== undefined;
 
-  // Skip live_status when fully idle — saves Tesla API calls at scale
-  const fullyIdle = !state.enabled && state.phase === 0 && !state.dayEnabled && !state.holidayEnabled && !carSyncEnabled && !hasPctExport && !pendingCmd;
-  // Also skip when Night mode is the only active thing and we're in the daytime idle window (06:00–22:00 London).
-  // The cycle doesn't start until ~23:30 so there is no value in polling every 2 min all afternoon.
+  // ── Tesla data-call gating (see shouldFetchLive) ────────────────────────────────────────────
+  const _now = Date.now();
   const _ltStr = new Date().toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false });
   const [_lth, _ltm] = _ltStr.split(':').map(Number);
   const _ltMins = _lth * 60 + _ltm;
-  const nightOnlyWaiting = state.enabled && state.phase === 0 && !state.dayEnabled && !state.holidayEnabled && !carSyncEnabled && !hasPctExport && !pendingCmd
-    && (_ltMins >= 360 && _ltMins < 1320); // 06:00–22:00 London
+  const _gate = shouldFetchLive({
+    enabled: state.enabled, phase: state.phase, dayEnabled: state.dayEnabled, holidayEnabled: state.holidayEnabled,
+    carSyncEnabled, hasPctExport, pendingCmd, timedExportActive: !!(timedExport && timedExport.endTime),
+    dayExporting: state.dayExporting, dayCharging: state.dayCharging, dayExportSlots: state.dayExportSlots,
+    dayNeedsCharge: state.dayNeedsCharge, dayChargeStartMins: state.dayChargeStartMins,
+    ltMins: _ltMins, lastLivePoll: state.lastLivePoll, nowMs: _now
+  });
+
   let currentPct = -1;
   let currentLoadKw = -1;
-  if (!fullyIdle && !nightOnlyWaiting) {
+  if (_gate.poll) {
     try {
       const live = await teslaGet(tokenData.access, tokenData.apiBase, `/api/1/energy_sites/${tokenData.energySiteId}/live_status`);
+      state.lastLivePoll = _now;
       currentPct = Math.round(live.response?.percentage_charged ?? -1);
       // load_power is the live house load in WATTS — reused for the adaptive reserve floor.
       currentLoadKw = live.response?.load_power != null ? live.response.load_power / 1000 : -1;
@@ -1230,6 +1266,7 @@ if (process.env.TEST_MODE === '1') {
     planSellSlots,
     deriveDayStopTime,
     computeReserveFloorPct,
+    shouldFetchLive,
     EXPORT_KWH_PER_SLOT,
 
     // Night cycle window trigger logic
