@@ -294,38 +294,47 @@ function shouldFetchLive({ enabled, phase, dayEnabled, holidayEnabled, carSyncEn
 //    off the grid below the floor afterwards — the user's explicit choice.
 //  • Away/adaptive: the floor is the battery estimated to still be needed to reach the tariff
 //    off-peak start (23:30), so it never drains to empty before the cheap overnight charge.
-function planSellSlots({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForSell = 0.5, offPeakStartMins = null, isManualFloor = false, headroom = FLOOR_HEADROOM, exportKwhPerSlot = EXPORT_KWH_PER_SLOT, windowStartMins = null }) {
+function planSellSlots({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForSell = 0.5, offPeakStartMins = null, isManualFloor = false, headroom = FLOOR_HEADROOM, exportKwhPerSlot = EXPORT_KWH_PER_SLOT, windowStartMins = null, importRate = null }) {
   if (!rates || !rates.length) return [];
   const exportPctPerSlot = exportKwhPerSlot / 13.5 * 100;
+  const MIN_EXPORT_KWH = 0.25;
   // House drain is only counted from when the day window opens (the overnight cycle holds the
   // battery ~full until then), so a strategy built just after midnight doesn't phantom-drain the
   // battery for the pre-window hours. Falls back to minuteOfDay when no window start is given.
   const drainStartMin = windowStartMins != null ? Math.max(minuteOfDay, windowStartMins) : minuteOfDay;
-  // Reserve the battery must still hold when a slot ENDS (see mode notes above). The flat manual
-  // floor for At-home; for Away, enough to run the house to the off-peak start, with the floor as a
-  // hard minimum. Falls back to the flat floor when no off-peak start is supplied.
+  // The floor is an EXPORT limit, never a hold: the runtime never keeps the battery AT the floor, it
+  // simply never SELLS below it, so the capacity down to the floor stays for the user's evening use.
+  // reservePctAt is the level a slot must leave behind when it ends — the flat manual floor for
+  // At-home; for Away, enough to coast to the off-peak start, with the floor as a hard minimum.
   const reservePctAt = (slotEndMin) => (isManualFloor || offPeakStartMins == null)
     ? planFloorPct
     : Math.max(planFloorPct, (offPeakStartMins - slotEndMin) / 60 * cRateForSell * headroom / 13.5 * 100);
+
   const battAt = (mins) => pctForPlan - Math.max(0, (mins - drainStartMin) / 60 * cRateForSell / 13.5 * 100);
 
-  // Size the export to the genuine excess, measured at the SINGLE highest-priced slot (we always
-  // sell at the best price): whatever sits above the reserve there. No excess → sell nothing.
-  // Tie-break equal prices by LATER slot first: on a flat/tied-price day, selling later is strictly
-  // better (same revenue, but the house runs off the battery through the day first instead of being
-  // pushed onto the grid by an early-morning drain).
-  const byPrice = rates.slice().sort((a, b) => (b.value - a.value) || (b.timeMin - a.timeMin));
-  const anchor = byPrice[0];
-  const excessPct = battAt(anchor.timeMin) - reservePctAt(anchor.timeMin + 30);
-  if (excessPct <= 0) return [];
+  // Never sell energy for less than it costs to buy it back for the house later: only consider slots
+  // whose export price beats the import rate (when known). Selling below import just forces a pricier
+  // evening import. With no import rate we fall back to selling at whatever the best slots are.
+  const candidates = importRate ? rates.filter(s => s.value >= importRate) : rates.slice();
+  if (!candidates.length) return [];
+
+  // Best-priced slots first (tie-break LATER first — same revenue, but the house runs off the battery
+  // through the day first rather than being pushed onto the grid by an early-morning drain). "Viable"
+  // = a slot that still holds genuine surplus above its floor at its own time, after the day's house
+  // drain. Anchor on the dearest VIABLE slot, NOT simply the dearest one: a late price spike the house
+  // has already drained the battery past no longer makes us bail to zero — we fall back to the best
+  // earlier slot that actually has surplus to sell.
+  const byPrice = candidates.sort((a, b) => (b.value - a.value) || (b.timeMin - a.timeMin));
+  const viable = byPrice.filter(s => battAt(s.timeMin) - reservePctAt(s.timeMin + 30) > 0);
+  if (!viable.length) return [];
+  const excessPct = battAt(viable[0].timeMin) - reservePctAt(viable[0].timeMin + 30);
   // The Powerwall exports at ~10kW, so one 30-min slot shifts up to `exportKwhPerSlot`. Book as many
-  // of the highest-priced slots as it takes to move the excess; the last one runs partial.
-  const slotsNeeded = Math.min(byPrice.length, Math.max(1, Math.ceil(excessPct / exportPctPerSlot)));
-  const chosen = byPrice.slice(0, slotsNeeded).sort((a, b) => a.timeMin - b.timeMin);
+  // of the dearest viable slots as it takes to move that surplus; the last one runs partial.
+  const slotsNeeded = Math.min(viable.length, Math.max(1, Math.ceil(excessPct / exportPctPerSlot)));
+  const chosen = viable.slice(0, slotsNeeded).sort((a, b) => a.timeMin - b.timeMin);
 
   // Walk the chosen slots chronologically to estimate each one's actual export (partial allowed),
-  // dropping any that would move a negligible tail below MIN_EXPORT_KWH.
-  const MIN_EXPORT_KWH = 0.25;
+  // selling down to its floor and dropping any negligible tail below MIN_EXPORT_KWH.
   let batt = pctForPlan, prevMin = drainStartMin;
   const out = [];
   for (const slot of chosen) {
@@ -430,7 +439,7 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
         });
         sellWindow = planSellSlots({
           rates: sellCandidates, pctForPlan, planFloorPct, minuteOfDay,
-          cRateForSell, offPeakStartMins, isManualFloor, windowStartMins
+          cRateForSell, offPeakStartMins, isManualFloor, windowStartMins, importRate
         });
       }
 
@@ -508,7 +517,8 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
         (slotTimeList ? ' [' + slotTimeList + ']' : '') +
         (dayNeedsCharge && dayChargeSlot ? ', charge ' + dayChargeSlot.startTime + '→' + dayChargeSlot.endTime : '') +
         (importRate ? ' · import ' + importRate.toFixed(1) + 'p' : ' · no import tariff') +
-        ' · ' + floorLabel);
+        ' · ' + floorLabel +
+        ' · house ' + planConsumption.toFixed(2) + 'kWh/hr');
     }
   }
 
@@ -573,18 +583,12 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
   });
   state.dayReserveFloorPct = reserveFloorPct;
 
-  // One-time reserve floor enforcement when Day window opens (At Home / manual floor mode only).
-  // Sets Powerwall backup reserve so house loads cannot drain battery below the floor between
-  // export slots. Fires once per day after strategy is built; resets at midnight with the new-day
-  // reset. Away mode uses an adaptive floor (export-stop only) so 0% reserve is correct there.
-  if (!state.dayFloorApplied && !state.dayExporting && !state.dayCharging &&
-      ds.awayMode === false && ds.manualFloorPct !== undefined && reserveFloorPct > 0) {
-    try {
-      await setMode(access, apiBase, siteId, 'self_consumption', reserveFloorPct);
-      log(state, 'Day: floor reserve → ' + reserveFloorPct + '% (battery protected until export window)');
-    } catch(e) {}
-    state.dayFloorApplied = true;
-  }
+  // The floor is an EXPORT limit, NOT a level to hold the battery at. We deliberately do NOT set a
+  // Powerwall backup reserve to the floor: the house keeps running off the battery normally all day
+  // and discharges below the floor in the evening for the user's own use (washing etc). Holding the
+  // floor as a reserve would instead pin the battery there and import from the grid to keep it — the
+  // exact behaviour we are avoiding. The floor is honoured only in the export logic below
+  // (pctInt > reserveFloorPct), so exports never eat into the evening reserve.
 
   const exportSlots = state.dayExportSlots || [];
 
@@ -681,11 +685,11 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
   } else if (!shouldExport && state.dayExporting && !state.carSyncPausedExport) {
     try {
       await setExport(access, apiBase, siteId, false);
-      // Restore self-powered mode. In manual floor mode, restore the floor reserve so house
-      // loads cannot drain the battery below the user's set floor after export ends.
-      // In Away mode, 0% reserve is correct — the adaptive floor only stops exports.
-      const _floorAfterExport = (ds.awayMode === false && ds.manualFloorPct !== undefined) ? reserveFloorPct : 0;
-      await setMode(access, apiBase, siteId, 'self_consumption', _floorAfterExport);
+      // Restore normal self-powered mode at 0% reserve — never hold the floor. After an export the
+      // house resumes running off the battery freely, including down through the floor in the evening
+      // for the user's own use. The floor was already honoured while exporting (we stopped at it), so
+      // there is nothing to protect by pinning a reserve here.
+      await setMode(access, apiBase, siteId, 'self_consumption', 0);
       state.dayExporting = false;
       if (state.dayExportStart) {
         const durationHrs = (now - state.dayExportStart.time) / 3600000;
