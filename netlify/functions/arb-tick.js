@@ -294,7 +294,7 @@ function shouldFetchLive({ enabled, phase, dayEnabled, holidayEnabled, carSyncEn
 //    off the grid below the floor afterwards — the user's explicit choice.
 //  • Away/adaptive: the floor is the battery estimated to still be needed to reach the tariff
 //    off-peak start (23:30), so it never drains to empty before the cheap overnight charge.
-function planSellSlots({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForSell = 0.5, offPeakStartMins = null, isManualFloor = false, headroom = FLOOR_HEADROOM, exportKwhPerSlot = EXPORT_KWH_PER_SLOT, windowStartMins = null, importRate = null }) {
+function planSellSlots({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForSell = 0.5, offPeakStartMins = null, isManualFloor = false, headroom = FLOOR_HEADROOM, exportKwhPerSlot = EXPORT_KWH_PER_SLOT, windowStartMins = null, minSellRate = null }) {
   if (!rates || !rates.length) return [];
   const exportPctPerSlot = exportKwhPerSlot / 13.5 * 100;
   const MIN_EXPORT_KWH = 0.25;
@@ -312,10 +312,12 @@ function planSellSlots({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForS
 
   const battAt = (mins) => pctForPlan - Math.max(0, (mins - drainStartMin) / 60 * cRateForSell / 13.5 * 100);
 
-  // Never sell energy for less than it costs to buy it back for the house later: only consider slots
-  // whose export price beats the import rate (when known). Selling below import just forces a pricier
-  // evening import. With no import rate we fall back to selling at whatever the best slots are.
-  const candidates = importRate ? rates.filter(s => s.value >= importRate) : rates.slice();
+  // Never sell energy for less than it costs to REPLACE it. With no solar the battery is refilled
+  // overnight at the cheap off-peak rate, so the true cost of exported energy is that off-peak rate,
+  // NOT the daytime import rate. The caller passes minSellRate derived from the off-peak rate (plus a
+  // round-trip margin); we only consider slots at or above it. With no rate given, sell at the best
+  // slots regardless. (The daytime import rate only governs the separate arbitrage path.)
+  const candidates = minSellRate ? rates.filter(s => s.value >= minSellRate) : rates.slice();
   if (!candidates.length) return [];
 
   // Best-priced slots first (tie-break LATER first — same revenue, but the house runs off the battery
@@ -437,9 +439,13 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
           const [_tsh, _tsm] = _tsStr.split(':').map(Number);
           return { ...s, timeMin: _tsh * 60 + _tsm };
         });
+        // Sell floor = the overnight recharge cost (off-peak rate) plus the round-trip margin, since
+        // exported energy is refilled overnight at off-peak, not at the daytime import rate.
+        const offPeakForSell = state.dayOffPeakRate || (octSettings.offPeakRate ? parseFloat(octSettings.offPeakRate) : 0);
+        const minSellRate = offPeakForSell > 0 ? (offPeakForSell + minMargin) / EFFICIENCY : null;
         sellWindow = planSellSlots({
           rates: sellCandidates, pctForPlan, planFloorPct, minuteOfDay,
-          cRateForSell, offPeakStartMins, isManualFloor, windowStartMins, importRate
+          cRateForSell, offPeakStartMins, isManualFloor, windowStartMins, minSellRate
         });
       }
 
