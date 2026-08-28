@@ -192,14 +192,13 @@ test('high house consumption leaves no surplus (never dumps in the cheap morning
   const morning = [slot(6, 0, 12), slot(6, 30, 11), slot(7, 0, 12)];
   const evening = [slot(18, 0, 20.9), slot(18, 30, 21.6)];
   const rates = [...morning, ...evening];
-  // Import 18p: the 11-12p morning slots are below it, so selling there would just force a pricier
-  // import later — the import-price guard filters them out, which is what stops any morning dump.
-  const importRate = 18;
-  // Heavy drain (0.8 kWh/hr): the battery is below the floor by the evening peak, so there is
-  // genuinely no surplus — it sells nothing, and crucially NOT the cheap morning slots.
-  const heavy = planSellSlots({ rates, pctForPlan: 100, planFloorPct: 30, minuteOfDay: 330, cRateForSell: 0.8, importRate });
+  // Away mode: the adaptive floor reserves whatever the house needs to coast to the 23:30 off-peak
+  // start. Under heavy load that is the whole battery, so there is genuinely no surplus at any slot —
+  // it sells nothing, and crucially NOT the cheap morning slots.
+  const offPeakStartMins = 23 * 60 + 30;
+  const heavy = planSellSlots({ rates, pctForPlan: 100, planFloorPct: 30, minuteOfDay: 330, cRateForSell: 0.8, offPeakStartMins });
   // Normal drain (0.3): a real surplus survives to the evening → sold at the top evening slots.
-  const normal = planSellSlots({ rates, pctForPlan: 100, planFloorPct: 30, minuteOfDay: 330, cRateForSell: 0.3, importRate });
+  const normal = planSellSlots({ rates, pctForPlan: 100, planFloorPct: 30, minuteOfDay: 330, cRateForSell: 0.3, offPeakStartMins });
   assertEqual(heavy.length, 0, 'no surplus under heavy load — sells nothing, never the morning');
   assert(normal.length > 0 && normal.every(s => s.timeMin >= 1080), 'normal load: sells the evening surplus');
 });
@@ -418,21 +417,34 @@ test('sells the best earlier slot when the single dearest slot is drained past [
   const rates = [slot(13, 0, 28), slot(18, 0, 26), slot(21, 30, 32)];
   const result = planSellSlots({
     rates, pctForPlan: 100, planFloorPct: 30, minuteOfDay: 330,
-    cRateForSell: 0.9, isManualFloor: true, windowStartMins: 330, importRate: 20
+    cRateForSell: 0.9, isManualFloor: true, windowStartMins: 330, minSellRate: 6
   });
   assert(result.length >= 1, 'must NOT bail to zero just because the dearest slot is late/drained');
   assert(result.some(s => s.timeMin === 13 * 60), 'sells the earlier 28p slot that genuinely has surplus');
   assert(!result.some(s => s.timeMin === 21 * 60 + 30), 'skips the 32p spike the battery cannot reach');
 });
 
-test('never sells below the import rate — a cheap-but-only slot is not dumped', () => {
-  // Only export slot of note is 15p, but importing costs 27p: selling now then buying back later loses
-  // money, so the import-price guard books nothing.
+test('sells overnight-charged excess above the recharge cost even if below the day import rate [REGRESSION: 28 Aug]', () => {
+  // No solar: the battery is filled overnight at ~3.5p. Today's best export (22.6p) is BELOW the 27.4p
+  // daytime import rate but far above the recharge cost, so it must still sell. The old guard wrongly
+  // compared against the day import rate and booked nothing all day.
+  const rates = [slot(16, 0, 19.3), slot(17, 0, 21.3), slot(18, 30, 22.6)];
   const result = planSellSlots({
-    rates: [slot(14, 0, 15), slot(18, 0, 14)], pctForPlan: 100, planFloorPct: 30,
-    minuteOfDay: 330, cRateForSell: 0.3, importRate: 27
+    rates, pctForPlan: 100, planFloorPct: 30, minuteOfDay: 330,
+    cRateForSell: 0.43, isManualFloor: true, windowStartMins: 330, minSellRate: 6.1
   });
-  assertEqual(result.length, 0, 'nothing sells below the import rate');
+  assert(result.length >= 1, 'must sell the excess even though every slot is below the day import rate');
+  assert(result.some(s => s.timeMin === 18 * 60 + 30), 'sells at the 22.6p peak');
+});
+
+test('never sells below the overnight recharge cost — a too-cheap slot is not dumped', () => {
+  // Off-peak recharge ~3.5p; with the round-trip margin the sell floor is ~6p. A lone 4p slot is below
+  // that, so selling it would lose money against tonight's cheap refill — book nothing.
+  const result = planSellSlots({
+    rates: [slot(14, 0, 4), slot(18, 0, 3)], pctForPlan: 100, planFloorPct: 30,
+    minuteOfDay: 330, cRateForSell: 0.3, minSellRate: 6
+  });
+  assertEqual(result.length, 0, 'nothing sells below the recharge-cost floor');
 });
 
 // At-home export stops AT the manual floor — never plans below it, whatever the surplus.
