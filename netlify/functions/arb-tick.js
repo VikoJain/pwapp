@@ -294,7 +294,7 @@ function shouldFetchLive({ enabled, phase, dayEnabled, holidayEnabled, carSyncEn
 //    off the grid below the floor afterwards — the user's explicit choice.
 //  • Away/adaptive: the floor is the battery estimated to still be needed to reach the tariff
 //    off-peak start (23:30), so it never drains to empty before the cheap overnight charge.
-function planSellSlots({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForSell = 0.5, offPeakStartMins = null, isManualFloor = false, headroom = FLOOR_HEADROOM, exportKwhPerSlot = EXPORT_KWH_PER_SLOT, windowStartMins = null, minSellRate = null }) {
+function planSellSlots({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForSell = 0.5, offPeakStartMins = null, isManualFloor = false, headroom = FLOOR_HEADROOM, exportKwhPerSlot = EXPORT_KWH_PER_SLOT, windowStartMins = null, minSellRate = null, importRate = null }) {
   if (!rates || !rates.length) return [];
   const exportPctPerSlot = exportKwhPerSlot / 13.5 * 100;
   const MIN_EXPORT_KWH = 0.25;
@@ -313,11 +313,26 @@ function planSellSlots({ rates, pctForPlan, planFloorPct, minuteOfDay, cRateForS
   const battAt = (mins) => pctForPlan - Math.max(0, (mins - drainStartMin) / 60 * cRateForSell / 13.5 * 100);
 
   // Never sell energy for less than it costs to REPLACE it. With no solar the battery is refilled
-  // overnight at the cheap off-peak rate, so the true cost of exported energy is that off-peak rate,
-  // NOT the daytime import rate. The caller passes minSellRate derived from the off-peak rate (plus a
-  // round-trip margin); we only consider slots at or above it. With no rate given, sell at the best
-  // slots regardless. (The daytime import rate only governs the separate arbitrage path.)
-  const candidates = minSellRate ? rates.filter(s => s.value >= minSellRate) : rates.slice();
+  // overnight at the cheap off-peak rate, so the baseline cost of exported energy is that off-peak
+  // rate. The caller passes minSellRate derived from the off-peak rate (plus a round-trip margin).
+  //
+  // Self-consumption guard (at-home only): the recharge cost is the right floor ONLY for energy the
+  // house will NOT use — genuine leftover excess that would otherwise just sit in the battery and be
+  // topped up overnight at off-peak. But if the house is projected to drain the battery down to (or
+  // below) its floor by the day's end, then there is NO leftover excess: every kWh exported is a kWh
+  // the house must instead re-import from the grid at the daytime rate. In that case exporting only
+  // beats self-consumption when the slot clears the import rate (÷ the ~0.9 export haircut, so the
+  // comparison is like-for-like with revenue). Away/adaptive homes barely draw during the day, so the
+  // leftover excess almost always exists and the recharge floor governs there — this only bites the
+  // at-home case where the house genuinely consumes the whole surplus. See the 28 Aug regression: a
+  // full battery with modest load still ends the day above its floor, so it keeps selling that excess.
+  const SELL_EFF = 0.9;
+  let effMinSellRate = minSellRate;
+  if (isManualFloor && importRate && offPeakStartMins != null) {
+    const noLeftoverExcess = battAt(offPeakStartMins) <= planFloorPct;
+    if (noLeftoverExcess) effMinSellRate = Math.max(minSellRate || 0, importRate / SELL_EFF);
+  }
+  const candidates = effMinSellRate ? rates.filter(s => s.value >= effMinSellRate) : rates.slice();
   if (!candidates.length) return [];
 
   // Best-priced slots first (tie-break LATER first — same revenue, but the house runs off the battery
@@ -445,7 +460,8 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
         const minSellRate = offPeakForSell > 0 ? (offPeakForSell + minMargin) / EFFICIENCY : null;
         sellWindow = planSellSlots({
           rates: sellCandidates, pctForPlan, planFloorPct, minuteOfDay,
-          cRateForSell, offPeakStartMins, isManualFloor, windowStartMins, minSellRate
+          cRateForSell, offPeakStartMins, isManualFloor, windowStartMins, minSellRate,
+          importRate
         });
       }
 
