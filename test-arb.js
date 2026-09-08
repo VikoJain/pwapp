@@ -437,6 +437,63 @@ test('sells overnight-charged excess above the recharge cost even if below the d
   assert(result.some(s => s.timeMin === 18 * 60 + 30), 'sells at the 22.6p peak');
 });
 
+// ═════════════════════════════════════════════════════════════════════════════
+console.log('\n── 2f. Self-consumption guard — do not sell below the import rate when the house will use it [9 Sep] ─');
+
+// 9 Sep: at-home, ~54% battery, 30% floor, ~0.31 kWh/hr load. Best export was 24.5p but the daytime
+// IMPORT rate was 27.4p, and the house was projected to drain the whole surplus to the floor before
+// the evening peak. So every exported kWh would just be re-imported at 27.4p — worth LESS than simply
+// letting the house use it. The planner used to fall back to the cheap morning slot (17.4p) and sell.
+// The guard now compares against the import rate (÷ export haircut) whenever there is no genuine
+// leftover excess, so it sells nothing and keeps the battery for the house.
+test('at-home does NOT sell when export is below the import rate and the house will consume the surplus [REGRESSION: 9 Sep]', () => {
+  const rates = [slot(7, 30, 17.4), slot(16, 30, 19.2), slot(17, 0, 21.2), slot(17, 30, 23.3), slot(18, 0, 23.9), slot(18, 30, 24.5)];
+  const result = planSellSlots({
+    rates, pctForPlan: 54, planFloorPct: 30, minuteOfDay: 447,
+    cRateForSell: 0.31, isManualFloor: true, windowStartMins: 330,
+    offPeakStartMins: 23 * 60 + 30, minSellRate: 6.1, importRate: 27.4
+  });
+  assertEqual(result.length, 0, 'sells nothing — self-use (avoiding a 27.4p import) beats every export slot');
+});
+
+// The guard is a rate floor, not a blanket "never sell": a slot that DOES clear the import rate still
+// sells even when the house will consume the rest of the surplus.
+test('at-home still sells a slot that clears the import rate [9 Sep]', () => {
+  const rates = [slot(7, 30, 17.4), slot(14, 0, 33), slot(18, 30, 24.5)];
+  const result = planSellSlots({
+    rates, pctForPlan: 54, planFloorPct: 30, minuteOfDay: 447,
+    cRateForSell: 0.31, isManualFloor: true, windowStartMins: 330,
+    offPeakStartMins: 23 * 60 + 30, minSellRate: 6.1, importRate: 27.4
+  });
+  assert(result.length === 1 && result[0].timeMin === 14 * 60, 'sells only the 33p slot, which clears the 27.4p import rate');
+});
+
+// The guard must NOT fire when there is genuine leftover excess — a full battery with modest load ends
+// the day above its floor, so that excess is refilled overnight at off-peak and still sells (below the
+// import rate is fine). This protects the 28 Aug behaviour once the import rate is wired through.
+test('at-home still sells genuine leftover excess even when below the import rate [9 Sep]', () => {
+  const rates = [slot(16, 0, 19.3), slot(17, 0, 21.3), slot(18, 30, 22.6)];
+  const result = planSellSlots({
+    rates, pctForPlan: 100, planFloorPct: 30, minuteOfDay: 330,
+    cRateForSell: 0.43, isManualFloor: true, windowStartMins: 330,
+    offPeakStartMins: 23 * 60 + 30, minSellRate: 6.1, importRate: 27.4
+  });
+  assert(result.length >= 1, 'full battery ends the day above its floor — leftover excess still sells');
+  assert(result.some(s => s.timeMin === 18 * 60 + 30), 'sells the 22.6p peak despite the 27.4p import rate');
+});
+
+// Away/adaptive homes barely draw during the day, so the import-rate guard never applies there — the
+// recharge-cost floor governs and the surplus sells at the best rate regardless of the import rate.
+test('away/adaptive is unaffected by the import-rate guard [9 Sep]', () => {
+  const rates = [slot(18, 0, 20.9), slot(18, 30, 21.6)];
+  const result = planSellSlots({
+    rates, pctForPlan: 100, planFloorPct: 30, minuteOfDay: 330,
+    cRateForSell: 0.3, isManualFloor: false, windowStartMins: 330,
+    offPeakStartMins: 23 * 60 + 30, minSellRate: 6.1, importRate: 27.4
+  });
+  assert(result.length >= 1, 'away mode sells the evening surplus even though export is below the import rate');
+});
+
 test('never sells below the overnight recharge cost — a too-cheap slot is not dumped', () => {
   // Off-peak recharge ~3.5p; with the round-trip margin the sell floor is ~6p. A lone 4p slot is below
   // that, so selling it would lose money against tonight's cheap refill — book nothing.
