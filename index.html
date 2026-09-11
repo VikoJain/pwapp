@@ -2646,7 +2646,10 @@ function renderDayUI(data) {
   const reserveFloor = data.dayReserveFloorPct;
   const importRate = data.dayImportRate;
   const currentRate = data.dayCurrentRate;
-  const samples = (data.dayConsumptionSamples || []).length;
+  // Reading count for TODAY's measured house load. The server tracks this as dayLoadCount
+  // (the old dayConsumptionSamples array was retired in the 18 Aug load-tracking rewrite and is
+  // no longer populated — reading it left the "Measuring standby consumption" bar stuck forever).
+  const samples = data.dayLoadCount || 0;
   const stats = data.dayStats || {};
 
   const toggle = document.getElementById('day-main-toggle');
