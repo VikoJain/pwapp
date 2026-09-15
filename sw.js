@@ -1,8 +1,7 @@
-const CACHE = 'powerwall-v2';
+const CACHE = 'powerwall-v3';
 const PRECACHE = [
   '/',
-  '/index.html',
-  'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js'
+  '/index.html'
 ];
 
 self.addEventListener('install', e => {
@@ -22,26 +21,27 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  const url = new URL(e.request.url);
+  const req = e.request;
 
-  // Never cache API calls — always go to the network for live data
-  if (
-    url.pathname.startsWith('/.netlify/') ||
-    url.hostname.includes('tesla') ||
-    url.hostname === 'api.octopus.energy' ||
-    url.hostname.includes('fleet-auth')
-  ) {
-    e.respondWith(fetch(e.request));
-    return;
-  }
+  // Only ever handle same-origin GETs. Let the browser fetch everything else
+  // (POST/PUT, cross-origin API calls to Tesla/Octopus, OAuth) natively —
+  // routing those through the SW breaks on iOS 26/27 with
+  // "FetchEvent.respondWith received an error: TypeError: Load failed".
+  if (req.method !== 'GET') return;
 
-  // Network-first for HTML so app updates reach users immediately
-  if (e.request.mode === 'navigate') {
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return;
+
+  // Never cache our own API calls — always go to the network for live data.
+  if (url.pathname.startsWith('/.netlify/')) return;
+
+  // Network-first for HTML so app updates reach users immediately.
+  if (req.mode === 'navigate') {
     e.respondWith(
-      fetch(e.request)
+      fetch(req)
         .then(resp => {
           const clone = resp.clone();
-          caches.open(CACHE).then(c => c.put(e.request, clone));
+          caches.open(CACHE).then(c => c.put(req, clone));
           return resp;
         })
         .catch(() => caches.match('/index.html'))
@@ -49,15 +49,18 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Cache-first for all other static assets (JS, icons, etc.)
+  // Cache-first for all other static assets (JS, icons, etc.), with a network
+  // fallback that can never reject the respondWith.
   e.respondWith(
-    caches.match(e.request).then(cached => {
+    caches.match(req).then(cached => {
       if (cached) return cached;
-      return fetch(e.request).then(resp => {
-        const clone = resp.clone();
-        caches.open(CACHE).then(c => c.put(e.request, clone));
-        return resp;
-      });
+      return fetch(req)
+        .then(resp => {
+          const clone = resp.clone();
+          caches.open(CACHE).then(c => c.put(req, clone));
+          return resp;
+        })
+        .catch(() => cached);
     })
   );
 });
