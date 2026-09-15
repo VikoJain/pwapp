@@ -9,6 +9,14 @@
 [functions.arb-tick]
   schedule = "*/2 * * * *"
 
+# Never let the browser cache the service worker — always revalidate so app
+# updates (and SW fixes) reach devices promptly instead of being pinned to a
+# stale worker. iOS in particular is sticky about this.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
 [[redirects]]
   from = "/.netlify/functions/*"
   to = "/.netlify/functions/:splat"
