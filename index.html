@@ -1677,7 +1677,28 @@ async function loadImportRates() {
     );
     const data = await resp.json();
     const results = data.results || [];
-    if (!results.length) return;
+    if (!results.length) {
+      // Two-rate smart tariffs (Intelligent Octopus Go, Go, Cosy, Economy 7) don't populate
+      // standard-unit-rates — the rates live in day-unit-rates / night-unit-rates as flat values.
+      const authHdr = { headers: { 'Authorization': 'Basic ' + btoa(state.octKey + ':') } };
+      const tbase = `${OCTOPUS_API}/products/${state.octImportProduct}/electricity-tariffs/${state.octImportTariff}`;
+      const [dayR, nightR] = await Promise.all([
+        fetch(`${tbase}/day-unit-rates/?page_size=2`, authHdr).then(r => r.json()).catch(() => null),
+        fetch(`${tbase}/night-unit-rates/?page_size=2`, authHdr).then(r => r.json()).catch(() => null)
+      ]);
+      const pick = j => (j && j.results && j.results[0]) ? parseFloat(parseFloat(j.results[0].value_inc_vat).toFixed(2)) : null;
+      const dayRate = pick(dayR), nightRate = pick(nightR);
+      if (dayRate == null && nightRate == null) return;
+      const offStart = state.offPeakStart ? timeToSlot(state.offPeakStart) : timeToSlot('23:30');
+      const offEnd = state.offPeakEnd ? timeToSlot(state.offPeakEnd) : timeToSlot('05:30');
+      const twoRate = new Array(48);
+      for (let i = 0; i < 48; i++) {
+        const isOffPeak = offStart > offEnd ? (i >= offStart || i < offEnd) : (i >= offStart && i < offEnd);
+        twoRate[i] = isOffPeak ? (nightRate != null ? nightRate : dayRate) : (dayRate != null ? dayRate : nightRate);
+      }
+      renderImportChart(twoRate);
+      return;
+    }
     // Fill 48 half-hourly slots. Go returns 1-2 records; expand to full day.
     const slots = new Array(48).fill(null);
     results.forEach(r => {
@@ -1822,7 +1843,22 @@ async function detectOffPeakWindow(apiKey, importTariffCode, importProductCode) 
     if (!resp.ok) return null;
     const data = await resp.json();
     const results = data.results || [];
-    if (!results.length) return null;
+    if (!results.length) {
+      // Two-rate smart tariffs (Intelligent Octopus Go etc.) expose flat day/night rates and no
+      // half-hourly standard rates. Use the night rate + the standard IOG off-peak window (23:30–05:30).
+      try {
+        const hdr = { headers: { 'Authorization': 'Basic ' + btoa(apiKey + ':') } };
+        const tb = `${OCTOPUS_API}/products/${importProductCode}/electricity-tariffs/${importTariffCode}`;
+        const [nr, dr] = await Promise.all([
+          fetch(`${tb}/night-unit-rates/?page_size=2`, hdr).then(r => r.json()).catch(() => null),
+          fetch(`${tb}/day-unit-rates/?page_size=2`, hdr).then(r => r.json()).catch(() => null)
+        ]);
+        const pick = j => (j && j.results && j.results[0]) ? parseFloat(parseFloat(j.results[0].value_inc_vat).toFixed(2)) : null;
+        const nightRate = pick(nr), dayRate = pick(dr);
+        if (nightRate == null) return null;
+        return { offPeakStart: '23:30', offPeakEnd: '05:30', offPeakRate: nightRate, standardRate: dayRate };
+      } catch(e) { return null; }
+    }
     const minRate = Math.min(...results.map(r => parseFloat(r.value_inc_vat)));
     const maxRate = Math.max(...results.map(r => parseFloat(r.value_inc_vat)));
     if (Math.abs(minRate - maxRate) < 0.1) return { offPeakRate: parseFloat(minRate.toFixed(2)), isFlat: true };
@@ -2826,7 +2862,9 @@ function initHealthPage() {
 function populateSettings() {
   document.getElementById('s-oct-key').value = state.octKey;
   document.getElementById('s-oct-account').value = state.octAccount || '';
-  document.getElementById('s-oct-tariff-txt').textContent = state.octTariff || '—';
+  document.getElementById('s-oct-tariff-txt').textContent = state.octTariff
+    ? state.octTariff + (state.octImportTariff ? ' · ' + state.octImportTariff : '')
+    : '—';
   document.getElementById('tesla-status-txt').textContent = state.teslaToken ? 'Connected' : 'Not connected';
 }
 async function saveOctopusSettings() {
