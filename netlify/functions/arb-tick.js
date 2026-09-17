@@ -154,6 +154,10 @@ async function getImportRateAtHour(store, deviceId, hour) {
     const res = await makeRequest({ hostname: 'api.octopus.energy', path, method: 'GET', headers: { 'Authorization': authHeader } }, null);
     const data = JSON.parse(res.body);
     if (data.results && data.results.length > 0) return parseFloat(parseFloat(data.results[0].value_inc_vat).toFixed(2));
+    // Two-rate smart tariffs (e.g. Intelligent Octopus Go) leave standard-unit-rates empty and
+    // expose the daytime rate under day-unit-rates instead.
+    const fallback = await fetchImportEndpointRate(settings, 'day-unit-rates');
+    if (fallback != null) return fallback;
   } catch (e) {}
   return null;
 }
@@ -176,6 +180,26 @@ async function getGoOffPeakRate(store, deviceId) {
     const fmt = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
     const path = '/v1/products/' + settings.octImportProduct + '/electricity-tariffs/' + settings.octImportTariff +
       '/standard-unit-rates/?period_from=' + fmt(slotStart) + '&period_to=' + fmt(slotEnd) + '&page_size=2';
+    const authHeader = 'Basic ' + Buffer.from(settings.octKey + ':').toString('base64');
+    const res = await makeRequest({ hostname: 'api.octopus.energy', path, method: 'GET', headers: { 'Authorization': authHeader } }, null);
+    const data = JSON.parse(res.body);
+    if (data.results && data.results.length > 0) return parseFloat(parseFloat(data.results[0].value_inc_vat).toFixed(2));
+    // Two-rate smart tariffs (e.g. Intelligent Octopus Go) leave standard-unit-rates empty and
+    // expose the off-peak rate under night-unit-rates instead.
+    const fallback = await fetchImportEndpointRate(settings, 'night-unit-rates');
+    if (fallback != null) return fallback;
+  } catch(e) {}
+  return null;
+}
+
+// Two-rate smart tariffs (Intelligent Octopus Go, Go, Cosy, Economy 7) don't populate
+// standard-unit-rates — their rates live in day-unit-rates (daytime/peak) and night-unit-rates
+// (off-peak) as flat values. Fetch the current value from the given endpoint for the import tariff.
+async function fetchImportEndpointRate(settings, endpoint) {
+  try {
+    if (!settings || !settings.octKey || !settings.octImportTariff || !settings.octImportProduct) return null;
+    const path = '/v1/products/' + settings.octImportProduct + '/electricity-tariffs/' + settings.octImportTariff +
+      '/' + endpoint + '/?page_size=2';
     const authHeader = 'Basic ' + Buffer.from(settings.octKey + ':').toString('base64');
     const res = await makeRequest({ hostname: 'api.octopus.energy', path, method: 'GET', headers: { 'Authorization': authHeader } }, null);
     const data = JSON.parse(res.body);
@@ -409,8 +433,10 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     ]);
     state.dayImportRate = importRate;
     if (!importRate) log(state, 'Day: import rate unavailable — day costs will not be tracked. Check Settings and press Re-detect tariff.');
-    // Cache off-peak rate for sell-export cost attribution
-    if (octSettings.offPeakRate) state.dayOffPeakRate = parseFloat(octSettings.offPeakRate);
+    // Cache off-peak rate for sell-export cost attribution. getGoOffPeakRate returns the stored
+    // offPeakRate when present, else falls back to the tariff's night-unit-rate (Intelligent Octopus
+    // Go and other two-rate tariffs), so this is populated even when standard-unit-rates is empty.
+    state.dayOffPeakRate = await getGoOffPeakRate(store, deviceId);
     const EFFICIENCY = 0.9;
     const SLOT_KWH = EXPORT_KWH_PER_SLOT; // ~10kW export discharge × 0.5hr (see EXPORT_KW)
     const CHARGE_RATE_KW = 3.68;
