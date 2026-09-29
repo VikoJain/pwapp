@@ -1172,7 +1172,7 @@ async function processUser(store, deviceId) {
     else if (state.phase === 1) {
       // Re-apply export-off and autonomous mode every tick to prevent Tesla reverting
       try { await setExport(access, apiBase, siteId, false); await setMode(access, apiBase, siteId, 'autonomous', chargeTargetPct); } catch(e) {}
-      if (m % 30 < 2) log(state, 'Phase 1 charging — battery at ' + pct + '%');
+      if (m % 30 < 3) log(state, 'Phase 1 charging — battery at ' + pct + '%');
       // Stop car charging during Phase 1 if car control is enabled — prevents car competing for grid import
       if (s.carControlEnabled && tokenData.vehicleId && !state.phase1CarStopSent) {
         const now1 = Date.now();
@@ -1261,8 +1261,8 @@ async function processUser(store, deviceId) {
         state.stats.phase2LastPct = pct;
         state.stats.phase2LastPctTime = Date.now();
       }
-      if (m % 30 < 2) log(state, 'Phase 2 exporting — battery at ' + pct + '%' + (state.stats.rate > 0 ? ' @ ' + state.stats.rate.toFixed(1) + 'p avg' : ''));
-      if (m % 10 < 2) {
+      if (m % 30 < 3) log(state, 'Phase 2 exporting — battery at ' + pct + '%' + (state.stats.rate > 0 ? ' @ ' + state.stats.rate.toFixed(1) + 'p avg' : ''));
+      if (m % 10 < 3) {
         // Mid-cycle viability check: if not enough time to finish export AND get ≥60 min recharge, skip to Phase 3
         const endTotalMins2 = endHour * 60 + endMinute;
         const nowTotalMins2 = h * 60 + m;
@@ -1318,7 +1318,7 @@ async function processUser(store, deviceId) {
         await setExport(access, apiBase, siteId, false);
         await setMode(access, apiBase, siteId, 'self_consumption', 0);
       } else {
-        if (m % 30 < 2) log(state, 'Phase 3 recharging — battery at ' + pct + '%');
+        if (m % 30 < 3) log(state, 'Phase 3 recharging — battery at ' + pct + '%');
         if (pct >= 98) {
           log(state, 'Phase 3 complete — battery at ' + pct + '%');
           state.phase = 4;
@@ -1339,7 +1339,7 @@ async function processUser(store, deviceId) {
       await sendPush(store, deviceId, 'Overnight cycle complete', 'Normal operation restored · Check Night tab for earnings');
     }
     else if (state.phase === 4) {
-      if (m % 30 < 2) log(state, 'Phase 4: standby — battery at ' + pct + '%, waiting until ' + fmt2(endHour) + ':' + fmt2(endMinute));
+      if (m % 30 < 3) log(state, 'Phase 4: standby — battery at ' + pct + '%, waiting until ' + fmt2(endHour) + ':' + fmt2(endMinute));
     }
     else if (state.phase > 0 && h >= endHour + 1) {
       log(state, 'Safety fallback at ' + fmt2(h) + ':' + fmt2(m) + ' — restoring normal mode');
