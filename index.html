@@ -2018,6 +2018,7 @@ function toggleActivityLog() {
 }
 
 async function pollServerStatus() {
+  if (document.hidden) return; // don't poll the backend while the app is backgrounded — resumes on focus
   try {
     const resp = await fetch('/.netlify/functions/arb-api?device_id=' + encodeURIComponent(getDeviceId()));
     const data = await resp.json();
@@ -3161,12 +3162,14 @@ function startPctInterpolation() {
 }
 function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-  // Fire immediately on start, then every 30 seconds
+  // Fire immediately on start, then every 120s. autoRefreshLive hits Tesla live_status directly
+  // (billed data calls), so we poll at 2-min cadence and skip entirely while the app is hidden.
   autoRefreshLive();
-  autoRefreshTimer = setInterval(autoRefreshLive, 60000);
+  autoRefreshTimer = setInterval(autoRefreshLive, 120000);
 }
 
 async function autoRefreshLive() {
+  if (document.hidden) return; // skip billed Tesla reads while backgrounded — a fresh read fires on focus
   if (!state.teslaToken || !state.energySiteId) return;
   try {
     const data = await teslaRequest(`/api/1/energy_sites/${state.energySiteId}/live_status`);
@@ -3192,6 +3195,10 @@ document.addEventListener('visibilitychange', () => {
   if (state.exportTimer && state.exportEndTime && Date.now() >= state.exportEndTime) {
     stopExport();
   }
+  // Polls pause while hidden (see autoRefreshLive / pollServerStatus). Fire both immediately on
+  // return to the foreground so the UI shows fresh data straight away rather than a stale value.
+  autoRefreshLive();
+  pollServerStatus();
 });
 </script>
 </body>
