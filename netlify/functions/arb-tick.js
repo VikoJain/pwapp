@@ -422,6 +422,9 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     state.dayExportSlots = [];
     state.dayFloorApplied = false;
     state.dayChargeHold = false;
+    state.dayExportRatesCache = []; // today's export rates, cached for the intraday sell re-plan
+    state.dayArbSlotTimes = [];     // arb slot timestamps to exclude from re-planned sells
+    state.dayLastReplan = null;     // throttle stamp (ms) for the intraday re-plan
 
     const _londonDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
     const _londonTz = new Date().toLocaleTimeString('en-GB', { timeZone: 'Europe/London', timeZoneName: 'short' }).includes('BST') ? '+01:00' : '+00:00';
@@ -551,6 +554,11 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       dayEstimatedRevenue = parseFloat((sellRevenue + arbRevenue).toFixed(2));
 
       state.dayExportSlots = dayExportSlots;
+      // Cache today's raw export rates + the arb slot times so the intraday sell re-plan can
+      // re-evaluate the SELL window against the live battery % and measured load without another
+      // Octopus fetch. Arb slots are excluded there (they run their own charge/export).
+      state.dayExportRatesCache = sortedRates.map(r => ({ validFrom: r.validFrom, value: r.value }));
+      state.dayArbSlotTimes = arbWindow.map(s => s.validFrom);
       state.dayNeedsCharge = dayNeedsCharge;
       state.dayChargeTargetPct = dayChargeTargetPct;
       state.dayChargeSlot = dayChargeSlot;
@@ -630,6 +638,84 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
     manualFloorPct: ds.manualFloorPct
   });
   state.dayReserveFloorPct = reserveFloorPct;
+
+  // ── Intraday sell re-plan ───────────────────────────────────────────────────────────────────
+  // The daily strategy is built once at ~05:30 from a ~full battery and the cross-day average house
+  // load (dayLoadAvgPersisted). That can be too pessimistic: on a light-load day the house will not
+  // actually drain to the floor, so genuine leftover excess exists that the morning plan suppressed
+  // (the self-consumption guard demanded the slot clear import÷0.9). Re-evaluate the SELL window on a
+  // ~30-min cadence using the LIVE battery % and TODAY's measured load, replacing only FUTURE sell
+  // slots. Arb slots (which drive charge timing) are left exactly as planned. The runtime floor gate
+  // (pctInt > reserveFloorPct) still bounds every export, so a re-plan can never sell below the floor.
+  const sellEnabledRT = ds.sellEnabled !== false;
+  const REPLAN_INTERVAL_MS = 30 * 60 * 1000;
+  const replanDue = !state.dayLastReplan || (now - state.dayLastReplan >= REPLAN_INTERVAL_MS);
+  if (sellEnabledRT && currentPctRaw >= 0 && !state.dayExporting && !state.dayCharging
+      && Array.isArray(state.dayExportRatesCache) && state.dayExportRatesCache.length && replanDue) {
+    state.dayLastReplan = now;
+    const EFFICIENCY = 0.9;
+    const isManualFloorRT = ds.awayMode === false && ds.manualFloorPct !== undefined;
+    const planFloorPctRT = isManualFloorRT ? ds.manualFloorPct : 10;
+    const offPeakForSellRT = state.dayOffPeakRate || (octSettings.offPeakRate ? parseFloat(octSettings.offPeakRate) : 0);
+    const minSellRateRT = offPeakForSellRT > 0 ? (offPeakForSellRT + minMargin) / EFFICIENCY : null;
+    const arbTimesRT = new Set(state.dayArbSlotTimes || []);
+    // Only FUTURE rate slots can still be sold; exclude arb slots (they run their own charge/export).
+    const sellCandidatesRT = state.dayExportRatesCache
+      .filter(s => !arbTimesRT.has(s.validFrom))
+      .map(s => {
+        const _tsStr = new Date(s.validFrom).toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false });
+        const [_tsh, _tsm] = _tsStr.split(':').map(Number);
+        return { ...s, timeMin: _tsh * 60 + _tsm };
+      })
+      .filter(s => s.timeMin > minuteOfDay);
+    // Drain clock starts NOW (windowStartMins = minuteOfDay): we plan forward from the live SOE.
+    const sellWindowRT = planSellSlots({
+      rates: sellCandidatesRT, pctForPlan: pct, planFloorPct: planFloorPctRT, minuteOfDay,
+      cRateForSell: measuredRate, offPeakStartMins: stopMinuteOfDay, isManualFloor: isManualFloorRT,
+      windowStartMins: minuteOfDay, minSellRate: minSellRateRT, importRate: state.dayImportRate
+    });
+    // Rebuild dayExportSlots: keep past/current slots (already executed/executing) and ALL arb slots,
+    // then splice in the freshly re-planned future SELL slots.
+    const kept = (state.dayExportSlots || []).filter(s => {
+      const [sh, sm] = s.time.split(':').map(Number);
+      return (sh * 60 + sm) <= minuteOfDay || s.type === 'arb';
+    });
+    const newSellSlots = sellWindowRT.map(s => {
+      const _lsStr = new Date(s.validFrom).toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false });
+      const [_lsh, _lsm] = _lsStr.split(':').map(Number);
+      const estKwh = s.exportKwh || 0;
+      return {
+        time: fmt2(_lsh) + ':' + fmt2(_lsm),
+        rate: s.value,
+        profit: null,
+        type: 'sell',
+        estKwh: parseFloat(estKwh.toFixed(2)),
+        estMins: Math.min(30, Math.max(1, Math.round(estKwh / EXPORT_KW * 60)))
+      };
+    });
+    const combinedRT = [...kept, ...newSellSlots].sort((a, b) => {
+      const [ah, am] = a.time.split(':').map(Number); const [bh, bm] = b.time.split(':').map(Number);
+      return (ah * 60 + am) - (bh * 60 + bm);
+    });
+    // Compare the future-sell signature before/after so we only log a real change (not every 30 min).
+    const futureSellSig = arr => arr
+      .filter(s => { const [x, y] = s.time.split(':').map(Number); return x * 60 + y > minuteOfDay && s.type === 'sell'; })
+      .map(s => s.time + ':' + s.estKwh).join(',');
+    const changed = futureSellSig(state.dayExportSlots || []) !== futureSellSig(combinedRT);
+    state.dayExportSlots = combinedRT;
+    // Refresh the revenue estimate (sell portion re-planned; arb portion unchanged).
+    const sellRevenueRT = sellWindowRT.reduce((sum, s) => sum + s.value * EFFICIENCY * (s.exportKwh || 0), 0) / 100;
+    const arbRevenueRT = combinedRT.filter(s => s.type === 'arb').reduce((sum, s) => sum + s.rate * EFFICIENCY * EXPORT_KWH_PER_SLOT, 0) / 100;
+    state.dayEstimatedRevenue = parseFloat((sellRevenueRT + arbRevenueRT).toFixed(2));
+    state.dayEstimatedProfit = parseFloat((state.dayEstimatedRevenue - (state.dayEstimatedImportCost || 0)).toFixed(2));
+    if (changed) {
+      const list = newSellSlots.map(s => s.time + ' (~' + s.estKwh + 'kWh/' + s.estMins + 'm)').join(', ');
+      log(state, 'Day: re-plan at ' + fmt2(h) + ':' + fmt2(m) + ' — ' +
+        (newSellSlots.length ? newSellSlots.length + ' sell slot(s) [' + list + ']' : 'no sell slots') +
+        ' · batt ' + pctInt + '% · house ' + measuredRate.toFixed(2) + 'kWh/hr' +
+        (state.dayImportRate ? ' · import ' + state.dayImportRate.toFixed(1) + 'p' : ''));
+    }
+  }
 
   // The floor is an EXPORT limit, NOT a level to hold the battery at. We deliberately do NOT set a
   // Powerwall backup reserve to the floor: the house keeps running off the battery normally all day
