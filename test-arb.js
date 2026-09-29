@@ -521,6 +521,43 @@ test('at-home never plans the battery below the manual floor', () => {
   assert(result.every(s => s.value >= 22.5), 'only the highest-priced evening slots');
 });
 
+console.log('\n── 2g. Intraday sell re-plan — live SOE + measured load unlocks a suppressed sell [29 Sep] ─');
+
+// 29 Sep: at-home, 35% floor, one 26.5p peak, import 27.4p, off-peak ~3.5p (sell floor ~6.1p).
+// The 05:30 build plans from a ~full battery and the cross-day average load (0.59), which projects the
+// house draining below the 35% floor by 23:30 → self-consumption guard demands import÷0.9 = 30.4p →
+// 26.5p fails → sells NOTHING. The intraday re-plan re-runs the SAME planner from the live midday SOE
+// and the LOWER measured load, which ends the day above the floor → genuine excess → the peak sells.
+const REPLAN_RATES = [slot(16, 30, 26.0), slot(17, 0, 26.5), slot(17, 30, 26.4)];
+
+test('05:30 build (full battery, 0.59 avg load) correctly suppresses — house consumes the surplus', () => {
+  const result = planSellSlots({
+    rates: REPLAN_RATES, pctForPlan: 100, planFloorPct: 35, minuteOfDay: 330,
+    cRateForSell: 0.59, isManualFloor: true, windowStartMins: 330,
+    offPeakStartMins: 23 * 60 + 30, minSellRate: 6.1, importRate: 27.4
+  });
+  assertEqual(result.length, 0, 'ends below the 35% floor → guard demands 30.4p → 26.5p sells nothing');
+});
+
+test('midday re-plan (live 81% SOE, measured 0.43 load) now sells the 26.5p peak [REGRESSION: 29 Sep]', () => {
+  const result = planSellSlots({
+    rates: REPLAN_RATES, pctForPlan: 81, planFloorPct: 35, minuteOfDay: 720,
+    cRateForSell: 0.43, isManualFloor: true, windowStartMins: 720,
+    offPeakStartMins: 23 * 60 + 30, minSellRate: 6.1, importRate: 27.4
+  });
+  assert(result.length >= 1, 'ends the day above the floor → leftover excess → the peak sells');
+  assert(result.some(s => s.timeMin === 17 * 60), 'sells the 26.5p @17:00 peak');
+});
+
+test('midday re-plan still suppresses when the load genuinely IS heavy (battery reaches the floor)', () => {
+  const result = planSellSlots({
+    rates: REPLAN_RATES, pctForPlan: 55, planFloorPct: 35, minuteOfDay: 720,
+    cRateForSell: 0.7, isManualFloor: true, windowStartMins: 720,
+    offPeakStartMins: 23 * 60 + 30, minSellRate: 6.1, importRate: 27.4
+  });
+  assertEqual(result.length, 0, 'heavy load drains to the floor → guard stays on → 26.5p < 30.4p → nothing');
+});
+
 // ═════════════════════════════════════════════════════════════════════════════
 console.log('\n── 3. Night cycle window detection ───────────────────────────────────────');
 
