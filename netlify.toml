@@ -7,7 +7,12 @@
   external_node_modules = ["@netlify/blobs"]
 
 [functions.arb-tick]
-  schedule = "*/2 * * * *"
+  # Every 3 min (was every 2). Fewer ticks = fewer Tesla live_status reads, which are ~99% of the
+  # API bill. Timing stays fine for 30-min energy slots; the just-in-time charge carries a 15-min
+  # buffer and shouldFetchLive uses a 6-min pre-slot buffer. NOTE: heartbeat/viability logs in
+  # arb-tick.js use `m % 30 < 3` / `m % 10 < 3` (widened from < 2) so they still fire under this
+  # cadence regardless of Netlify's minute offset.
+  schedule = "*/3 * * * *"
 
 # Never let the browser cache the service worker — always revalidate so app
 # updates (and SW fixes) reach devices promptly instead of being pinned to a
