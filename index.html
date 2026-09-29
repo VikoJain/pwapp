@@ -2724,7 +2724,7 @@ function renderDayUI(data) {
     else if (charging) { barEl.textContent = 'Charging from grid — target ' + (chargeTargetPct || '—') + '% before export window'; }
     else if (exporting) { barEl.textContent = 'Exporting at ' + (currentRate > 0 ? currentRate.toFixed(1) + 'p' : '—p'); }
     else if (samples < 3) { barEl.textContent = 'Measuring standby consumption — check back in a few minutes…'; }
-    else if (exportSlots.length === 0) { barEl.textContent = importRate ? 'No profitable export slots found today (import ' + importRate.toFixed(1) + 'p)' : 'Calculating strategy — check back shortly…'; }
+    else if (exportSlots.length === 0) { barEl.textContent = importRate ? 'No profitable export slots for today — checked at today\'s rates (import ' + importRate.toFixed(1) + 'p). Re-checks through the day.' : 'Import rate unavailable — open Settings and press Re-detect tariff.'; }
     else if (needsCharge && chargeSlot) { barEl.textContent = exportSlots.length + ' profitable slot' + (exportSlots.length !== 1 ? 's' : '') + ' — charging ' + chargeSlot.startTime + ' → ' + chargeSlot.endTime + ' (just-in-time)'; }
     else { barEl.textContent = exportSlots.length + ' profitable slot' + (exportSlots.length !== 1 ? 's' : '') + ' — existing battery sufficient'; }
   }
@@ -2742,11 +2742,15 @@ function renderDayUI(data) {
       const lastSlot = exportSlots[exportSlots.length - 1];
       const [lh, lm] = lastSlot ? lastSlot.time.split(':').map(Number) : [0, 0];
       const endTime = lastSlot ? String(lh + (lm === 30 ? 1 : 0)).padStart(2,'0') + ':' + (lm === 30 ? '00' : '30') : '';
+      const totalKwh = exportSlots.reduce((a, s) => a + (s.estKwh || 0), 0);
       summaryEl.innerHTML = 'Best <strong>' + exportSlots.length + '-slot</strong> window: <strong>' + (exportSlots[0] ? exportSlots[0].time : '—') + '–' + endTime + '</strong>' +
+        (totalKwh > 0 ? ' · <strong>~' + totalKwh.toFixed(1) + 'kWh</strong> export' : '') +
         (importRate ? ' · import <strong>' + importRate.toFixed(1) + 'p</strong>' : '') +
         (needsCharge ? ' · charge ' + (chargeSlot ? chargeSlot.startTime + '→' + chargeSlot.endTime : '') : '');
     } else {
-      summaryEl.textContent = 'Rates load at 05:30 — check back then to see today\'s opportunity.';
+      summaryEl.textContent = importRate
+        ? 'No profitable export windows at today\'s rates — re-checked through the day.'
+        : 'Today\'s rates load at the start of the day window — check back shortly.';
     }
   }
 
@@ -2787,7 +2791,8 @@ function renderDayUI(data) {
         + '<span style="font-size:11px;font-weight:700;background:' + badgeBg + ';color:' + badgeCol + ';padding:2px 7px;border-radius:6px;min-width:40px;text-align:center">' + badgeText + '</span>'
         + '<span style="font-size:13px;font-weight:600">' + s.time + '</span>'
         + '<span style="font-size:13px;color:#636366;flex:1;margin-left:6px">' + s.rate.toFixed(1) + 'p'
-        + (s.profit != null ? ' · <span style="color:#34c759">+' + s.profit.toFixed(1) + 'p/kWh</span>' : '') + '</span>'
+        + (s.profit != null ? ' · <span style="color:#34c759">+' + s.profit.toFixed(1) + 'p/kWh</span>' : '')
+        + (s.estKwh > 0 ? ' · <span style="color:#8e8e93">~' + s.estKwh + 'kWh · ' + s.estMins + 'm</span>' : '') + '</span>'
         + '<span style="font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;' + pillStyle + '">' + pillText + '</span>'
         + '</div>';
     });
