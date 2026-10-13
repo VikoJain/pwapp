@@ -44,7 +44,7 @@ async function runAll() {
 // ── Load arb-tick.js test exports ─────────────────────────────────────────────
 process.env.TEST_MODE = '1';
 const { findBestConsecutiveWindow, planSellSlots, isNightWindowActive, isPhase3PastEnd, dayChargeStopMode, dayShouldCharge,
-        deriveDayStopTime, computeReserveFloorPct, shouldFetchLive, EXPORT_KWH_PER_SLOT }
+        deriveDayStopTime, computeReserveFloorPct, shouldFetchLive, needsDayCleanup, EXPORT_KWH_PER_SLOT }
   = require('./netlify/functions/arb-tick')._test;
 
 // ── Mock @netlify/blobs for arb-api.js ────────────────────────────────────────
@@ -869,6 +869,46 @@ test('holding a reserve between slots → ~15-min heartbeat, not every tick', ()
   assert(gate({ lastLivePoll: 1000000 - 2 * 60000 }).poll === false, 'throttled 2 min after last poll');
   assert(gate({ lastLivePoll: 1000000 - 16 * 60000 }).poll === true, 'heartbeat fires after 15 min');
   assert(gate({ lastLivePoll: null }).poll === true, 'first-ever tick polls to seed lastLivePoll');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section 8 — Day-mode disable cleanup (regression: Day off but still exporting)
+// toggle_day leaves dayExporting/dayCharging true so the next tick restores normal
+// mode. The tick's early-return guards must let the tick REACH that cleanup block,
+// else a Day-only user (Night off, no car sync) returns early and the Powerwall is
+// left in `autonomous, 0%` export mode forever.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('Day disabled mid-export → cleanup is pending (Day-only user)', () => {
+  // Night off, phase 0, day just toggled off but was exporting.
+  const state = { enabled: false, phase: 0, dayEnabled: false, holidayEnabled: false,
+    dayExporting: true, dayCharging: false };
+  assert(needsDayCleanup(state) === true, 'must flag cleanup so the tick does not early-return');
+});
+
+test('Day disabled mid-charge → cleanup is pending', () => {
+  const state = { enabled: false, phase: 0, dayEnabled: false, holidayEnabled: false,
+    dayExporting: false, dayCharging: true };
+  assert(needsDayCleanup(state) === true, 'leftover charge mode must be cleaned up too');
+});
+
+test('Day still enabled → no cleanup (normal running)', () => {
+  const state = { enabled: false, phase: 0, dayEnabled: true, holidayEnabled: false,
+    dayExporting: true, dayCharging: false };
+  assert(needsDayCleanup(state) === false, 'an active Day export is not a cleanup case');
+});
+
+test('Day off and flags cleared → no cleanup (steady idle)', () => {
+  const state = { enabled: false, phase: 0, dayEnabled: false, holidayEnabled: false,
+    dayExporting: false, dayCharging: false };
+  assert(needsDayCleanup(state) === false, 'fully idle must early-return as before');
+});
+
+test('Night cycle active → defer Day cleanup to a phase-0 tick', () => {
+  // Cleanup restores self_consumption; must not fight the Night phase controller.
+  const state = { enabled: true, phase: 2, dayEnabled: false, holidayEnabled: false,
+    dayExporting: true, dayCharging: false };
+  assert(needsDayCleanup(state) === false, 'cleanup only runs once the Night cycle is at phase 0');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
