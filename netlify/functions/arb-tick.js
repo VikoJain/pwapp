@@ -308,6 +308,16 @@ function shouldFetchLive({ enabled, phase, dayEnabled, holidayEnabled, carSyncEn
   return { poll: true, needFine: false, reason: 'heartbeat' };
 }
 
+// True when Day mode has been turned off but the Powerwall was left in a Day-driven export/charge
+// mode. toggle_day leaves dayExporting/dayCharging set so the tick can send the restore command on
+// the next pass — but the tick's early-return guards must let the tick REACH the cleanup block
+// (otherwise a Day-only user, with Night off and no car sync, returns early and the Powerwall stays
+// in `autonomous, 0%` export mode forever — Tesla's TOU algorithm keeps exporting at peak).
+function needsDayCleanup(state) {
+  return !state.dayEnabled && !state.holidayEnabled && state.phase === 0
+    && (state.dayExporting || state.dayCharging);
+}
+
 // Sell-slot selection — sell the battery's genuine excess at the HIGHEST export price(s), with
 // partial-slot precision. rates need a numeric timeMin (minutes past midnight). Each returned slot
 // carries an `exportKwh` estimate; the last one usually runs partial (the runtime stops mid-slot the
@@ -1128,10 +1138,10 @@ async function processUser(store, deviceId) {
       } catch (e) { log(state, 'Vehicle command error: ' + e.message); }
     }
     await store.set('state_' + deviceId, JSON.stringify(state));
-    if (!state.enabled && state.phase === 0 && !carSyncEnabled) return;
+    if (!state.enabled && state.phase === 0 && !carSyncEnabled && !state.dayEnabled && !state.holidayEnabled && !needsDayCleanup(state)) return;
   }
 
-  if (!state.enabled && state.phase === 0 && !state.dayEnabled && !state.holidayEnabled && !carSyncEnabled) {
+  if (!state.enabled && state.phase === 0 && !state.dayEnabled && !state.holidayEnabled && !carSyncEnabled && !needsDayCleanup(state)) {
     return;
   }
 
@@ -1353,7 +1363,7 @@ async function processUser(store, deviceId) {
   }
 
   // If Day mode was disabled while charging or exporting, restore normal mode
-  if (!state.dayEnabled && !state.holidayEnabled && state.phase === 0 && (state.dayCharging || state.dayExporting)) {
+  if (needsDayCleanup(state)) {
     try {
       await setExport(access, apiBase, siteId, false);
       await setMode(access, apiBase, siteId, 'self_consumption', 0);
@@ -1405,6 +1415,7 @@ if (process.env.TEST_MODE === '1') {
     deriveDayStopTime,
     computeReserveFloorPct,
     shouldFetchLive,
+    needsDayCleanup,
     EXPORT_KWH_PER_SLOT,
 
     // Night cycle window trigger logic
