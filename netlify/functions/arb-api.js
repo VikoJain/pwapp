@@ -7,6 +7,15 @@ const CORS = {
 
 const DEFAULT_STATE = '{"phase":0,"enabled":false,"log":[],"stats":{"kwh":0,"rate":0,"earned":0}}';
 
+// Every per-device blob key ends with "_<device_id>" (state_, token_, day_settings_, soe_history_,
+// device_<id> itself, etc.). Returns all keys belonging to one device so delete_device can remove
+// an orphaned record completely. Exported for unit testing so the matcher can't drift.
+function keysForDevice(allKeys, id) {
+  const suffix = '_' + id;
+  return allKeys.filter(key => key.endsWith(suffix));
+}
+module.exports.keysForDevice = keysForDevice;
+
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers: CORS, body: '' };
   try {
@@ -18,6 +27,43 @@ exports.handler = async (event) => {
     // Endpoints that don't require device_id
     if (event.httpMethod === 'GET' && qp.type === 'vapid_public_key') {
       return { statusCode: 200, headers: CORS, body: JSON.stringify({ publicKey: process.env.VAPID_PUBLIC_KEY || '' }) };
+    }
+
+    // Diagnostic: list every device record arb-tick is still driving. An ORPHANED record — left
+    // behind when the PWA was reinstalled and the localStorage device_id regenerated — keeps running
+    // with its old settings and its own auto-refreshed Tesla token, silently controlling the same
+    // Powerwall (e.g. a Day/Sell export at the evening peak that never appears in the current UI's
+    // activity log). This surfaces them so the orphan can be identified and removed. device_id is
+    // optional and only used to flag which record is the caller's current one.
+    if (event.httpMethod === 'GET' && qp.type === 'devices') {
+      const currentId = qp.device_id || null;
+      const result = await store.list({ prefix: 'device_' });
+      const blobs = result.blobs || [];
+      const devices = [];
+      for (const b of blobs) {
+        const id = b.key.replace('device_', '');
+        const st = JSON.parse(await store.get('state_' + id) || DEFAULT_STATE);
+        const ds = JSON.parse((await store.get('day_settings_' + id)) || (await store.get('holiday_settings_' + id)) || 'null');
+        const cs = JSON.parse(await store.get('car_sync_settings_' + id) || 'null');
+        const tok = JSON.parse(await store.get('token_' + id) || 'null');
+        devices.push({
+          deviceId: id,
+          isCurrent: id === currentId,
+          nightEnabled: !!st.enabled,
+          phase: st.phase || 0,
+          dayEnabled: !!(st.dayEnabled || st.holidayEnabled),
+          dayExporting: !!st.dayExporting,
+          dayCharging: !!st.dayCharging,
+          sellEnabled: ds ? ds.sellEnabled !== false : null,
+          arbEnabled: ds ? ds.arbEnabled !== false : null,
+          carSyncEnabled: !!(cs && cs.enabled),
+          hasToken: !!(tok && tok.access),
+          energySiteId: (tok && tok.energySiteId) || null,
+          lastClientSeen: st.lastClientSeen || null,
+          lastLog: (st.log && st.log.length) ? st.log[0] : null
+        });
+      }
+      return { statusCode: 200, headers: CORS, body: JSON.stringify({ devices, currentDeviceId: currentId }) };
     }
 
     // All other requests require device_id
@@ -44,6 +90,13 @@ exports.handler = async (event) => {
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ soeHistory }) };
       }
       const state = JSON.parse(await store.get(k('state')) || DEFAULT_STATE);
+      // Stamp last-seen so arb-tick's staleness guard can retire orphaned records (a real device's
+      // UI polls this constantly; an orphan never does). Throttled to ~1/hr to avoid a write per poll.
+      const nowMs = Date.now();
+      if (!state.lastClientSeen || nowMs - state.lastClientSeen > 60 * 60 * 1000) {
+        state.lastClientSeen = nowMs;
+        try { await store.set(k('state'), JSON.stringify(state)); } catch(_) {}
+      }
       const arbSettings = JSON.parse(await store.get(k('arb_settings')) || 'null');
       const daySettings = JSON.parse(await store.get(k('day_settings')) || await store.get(k('holiday_settings')) || 'null');
       const carSyncSettings = JSON.parse(await store.get(k('car_sync_settings')) || 'null');
@@ -63,6 +116,18 @@ exports.handler = async (event) => {
         // Do not reset phase here — arb-tick handles clean shutdown if disabled mid-cycle
         await store.set(k('state'), JSON.stringify(state));
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true }) };
+      }
+
+      if (body.action === 'delete_device') {
+        // Remove every blob belonging to a device record so arb-tick stops processing it. Used to
+        // evict an orphaned record that is still driving the Powerwall from a stale PWA install.
+        const target = body.target_device_id;
+        if (!target) return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Missing target_device_id' }) };
+        if (target === device_id) return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'Refusing to delete the current device' }) };
+        const all = await store.list();
+        const keys = keysForDevice((all.blobs || []).map(x => x.key), target);
+        for (const key of keys) { try { await store.delete(key); } catch(_) {} }
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true, deleted: keys }) };
       }
 
       if (body.action === 'save_settings') {
