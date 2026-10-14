@@ -641,6 +641,14 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
         </div>
       </div>
       <div class="card">
+        <div class="card-title">Connected devices</div>
+        <div style="font-size:12px;color:#8e8e93;line-height:1.6;margin-bottom:10px">
+          Every app install that has connected to your Powerwall. If you ever reinstalled the app, an old record can keep running in the background and control your Powerwall on its own. Scan here and remove any device you don't recognise.
+        </div>
+        <button class="btn-primary" id="dev-scan-btn" onclick="loadDevices()">Scan devices</button>
+        <div id="dev-list" style="margin-top:12px"></div>
+      </div>
+      <div class="card">
         <div class="card-title">About</div>
         <div class="settings-row"><div class="settings-lbl">Version</div><div style="font-size:13px;color:#8e8e93">2.0.0</div></div>
         <div class="settings-row"><div class="settings-lbl">Tesla API</div><div style="font-size:13px;color:#8e8e93">Fleet API v1 (EU)</div></div>
@@ -1055,6 +1063,71 @@ function toast(msg, dur=2800) {
   const el = document.getElementById('toast');
   el.textContent = msg; el.classList.add('show');
   setTimeout(() => el.classList.remove('show'), dur);
+}
+
+// ── Connected devices (orphaned-record cleanup) ───────────────────────────────
+function devEscape(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function devTimeAgo(ms) {
+  if (!ms) return 'never';
+  const s = Math.floor((Date.now() - ms) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s/60) + ' min ago';
+  if (s < 86400) return Math.floor(s/3600) + ' h ago';
+  return Math.floor(s/86400) + ' days ago';
+}
+function devRenderRow(d) {
+  const roles = [];
+  if (d.nightEnabled) roles.push('Night');
+  if (d.dayEnabled) roles.push('Day' + (d.sellEnabled ? '+Sell' : ''));
+  if (d.carSyncEnabled) roles.push('Car sync');
+  if (d.dayExporting) roles.push('EXPORTING NOW');
+  const rolesTxt = roles.length ? roles.join(' · ') : 'Idle (nothing enabled)';
+  const idShort = d.deviceId.length > 16 ? d.deviceId.slice(0,10) + '…' + d.deviceId.slice(-4) : d.deviceId;
+  const badge = d.isCurrent
+    ? '<span style="background:#0a84ff;color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px">THIS DEVICE</span>'
+    : '<span style="background:#636366;color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px">OTHER DEVICE</span>';
+  const flagged = !d.isCurrent && (d.dayEnabled || d.nightEnabled || d.dayExporting);
+  const border = flagged ? 'border:1px solid #ff9f0a;' : 'border:1px solid #2c2c2e;';
+  const removeBtn = d.isCurrent ? '' :
+    '<button onclick="removeDevice(\'' + devEscape(d.deviceId) + '\')" style="background:#ff3b30;color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:600;margin-top:10px;width:100%">Remove this device</button>';
+  return '<div style="' + border + 'border-radius:12px;padding:12px;margin-bottom:8px">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center">' + badge +
+    '<span style="font-size:11px;color:#8e8e93;font-family:monospace">' + devEscape(idShort) + '</span></div>' +
+    '<div style="font-size:14px;font-weight:600;margin-top:8px">' + devEscape(rolesTxt) + '</div>' +
+    '<div style="font-size:12px;color:#8e8e93;margin-top:2px">Last app contact: ' + devTimeAgo(d.lastClientSeen) + '</div>' +
+    (d.lastLog ? '<div style="font-size:11px;color:#8e8e93;margin-top:4px">' + devEscape(d.lastLog) + '</div>' : '') +
+    removeBtn + '</div>';
+}
+async function loadDevices() {
+  const btn = document.getElementById('dev-scan-btn');
+  const list = document.getElementById('dev-list');
+  if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
+  try {
+    const resp = await fetch('/.netlify/functions/arb-api?type=devices&device_id=' + encodeURIComponent(getDeviceId()));
+    const data = await resp.json();
+    const devices = data.devices || [];
+    if (!devices.length) { list.innerHTML = '<div style="font-size:13px;color:#8e8e93">No device records found.</div>'; return; }
+    devices.sort((a,b) => (b.isCurrent?1:0) - (a.isCurrent?1:0));
+    const extra = devices.filter(d => !d.isCurrent && (d.dayEnabled || d.nightEnabled || d.dayExporting)).length;
+    const hdr = extra ? '<div style="font-size:12px;color:#ff9f0a;line-height:1.5;margin-bottom:8px">⚠️ ' + extra + ' other device record(s) can still control your Powerwall. Remove any you don\'t recognise.</div>' : '';
+    list.innerHTML = hdr + devices.map(devRenderRow).join('');
+  } catch(e) {
+    list.innerHTML = '<div style="font-size:13px;color:#ff3b30">Could not load devices: ' + devEscape(e.message || e) + '</div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Rescan devices'; }
+  }
+}
+async function removeDevice(id) {
+  if (!confirm('Remove this device record? It will immediately stop controlling your Powerwall. Only do this for a device you do not recognise.')) return;
+  try {
+    const resp = await fetch('/.netlify/functions/arb-api', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete_device', device_id: getDeviceId(), target_device_id: id })
+    });
+    const data = await resp.json();
+    if (data.ok) { toast('Device removed (' + (data.deleted ? data.deleted.length : 0) + ' records cleared)'); loadDevices(); }
+    else { toast(data.error || 'Could not remove device'); }
+  } catch(e) { toast('Error: ' + (e.message || e)); }
 }
 function setConnStatus(s) {
   const dot = document.getElementById('conn-dot'), lbl = document.getElementById('conn-label');
