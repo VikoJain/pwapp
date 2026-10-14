@@ -318,6 +318,52 @@ function needsDayCleanup(state) {
     && (state.dayExporting || state.dayCharging);
 }
 
+// ── Orphaned/duplicate device guards ─────────────────────────────────────────────────────────
+// arb-tick processes EVERY device_ blob it finds. device_id lives in the browser's localStorage,
+// so reinstalling the PWA (e.g. the 15 Sep iOS service-worker fix) mints a fresh device_id and
+// ORPHANS the old record — which keeps running with its old settings and its own auto-refreshed
+// Tesla token, silently driving the same Powerwall (the 14 Oct evening-peak export that never
+// appeared in the current UI's log). These three guards make that class of bug self-correcting and
+// loud instead of silent, and are unit-tested so future changes can't reintroduce it.
+
+const DEVICE_STALE_MS = 14 * 24 * 60 * 60 * 1000; // 14 days with no client (UI) contact → orphan
+
+// A real device's UI polls constantly, stamping state.lastClientSeen (see arb-api GET). A record
+// not seen by any client for DEVICE_STALE_MS is treated as orphaned and skipped — it stops running
+// AND stops making its (billed) Tesla live_status calls. Never cull a device mid-cycle (phase > 0),
+// and treat a missing stamp as active (migration grace for records predating this field).
+function isDeviceActive(state, nowMs, maxAgeMs = DEVICE_STALE_MS) {
+  if (state && state.phase > 0) return true;
+  const seen = state && state.lastClientSeen;
+  if (!seen) return true;
+  return (nowMs - seen) < maxAgeMs;
+}
+
+// Site-conflict tripwire: returns groups of ≥2 device records that share one energySiteId — i.e.
+// two installs both driving the same Powerwall. Had this existed the orphan would have been obvious
+// on day one instead of hiding for a month.
+function detectDuplicateSites(devices) {
+  const bySite = {};
+  for (const d of devices) {
+    if (!d || !d.energySiteId) continue;
+    (bySite[d.energySiteId] = bySite[d.energySiteId] || []).push(d.deviceId);
+  }
+  return Object.keys(bySite)
+    .filter(site => bySite[site].length > 1)
+    .map(site => ({ energySiteId: site, deviceIds: bySite[site] }));
+}
+
+// Invariant: a device issues Tesla control commands (setMode/setExport) ONLY when it has an active
+// role. With Night off, Day/Holiday off, car sync off, no pending Day cleanup and no active cycle,
+// it must stay completely hands-off. This is the single gate used by processUser's early return,
+// so the tested predicate and the runtime behaviour cannot drift. (Manual pct/timed exports are
+// handled before this gate and leave export enabled on their own.)
+function deviceMayControlPowerwall(state, ctx) {
+  const carSyncEnabled = !!(ctx && ctx.carSyncEnabled);
+  return !!state.enabled || state.phase > 0 || !!state.dayEnabled || !!state.holidayEnabled
+    || carSyncEnabled || needsDayCleanup(state);
+}
+
 // Sell-slot selection — sell the battery's genuine excess at the HIGHEST export price(s), with
 // partial-slot precision. rates need a numeric timeMin (minutes past midnight). Each returned slot
 // carries an `exportKwh` estimate; the last one usually runs partial (the runtime stops mid-slot the
@@ -962,11 +1008,16 @@ async function runCarSync(state, store, tokenData, settings, deviceId, phase1Res
     if (state.carSyncActive) {
       state.carSyncRecentStop = Date.now();
       try {
-        const reserveToRestore = state.phase === 3 ? 100
-          : state.phase === 1 ? phase1Reserve
-          : state.dayCharging ? 100
-          : 0;
-        await setMode(access, apiBase, siteId, 'autonomous', reserveToRestore);
+        if (state.phase === 3 || state.phase === 1 || state.dayCharging) {
+          // Mid-cycle: hand back to the active Night/Day phase in autonomous with its reserve.
+          const reserveToRestore = state.phase === 3 ? 100 : state.phase === 1 ? phase1Reserve : 100;
+          await setMode(access, apiBase, siteId, 'autonomous', reserveToRestore);
+        } else {
+          // Idle (no active cycle, no Day charge): restore the app's TRUE idle mode, NOT autonomous.
+          // autonomous is Tesla Time-Based Control and will self-export the battery at the evening
+          // peak — the 14 Oct failure mode. self_consumption just powers the house, never exports.
+          await setMode(access, apiBase, siteId, 'self_consumption', 0);
+        }
         state.carSyncActive = false;
 
         if (state.carSyncPausedExport) {
@@ -1138,10 +1189,10 @@ async function processUser(store, deviceId) {
       } catch (e) { log(state, 'Vehicle command error: ' + e.message); }
     }
     await store.set('state_' + deviceId, JSON.stringify(state));
-    if (!state.enabled && state.phase === 0 && !carSyncEnabled && !state.dayEnabled && !state.holidayEnabled && !needsDayCleanup(state)) return;
+    if (!deviceMayControlPowerwall(state, { carSyncEnabled })) return;
   }
 
-  if (!state.enabled && state.phase === 0 && !state.dayEnabled && !state.holidayEnabled && !carSyncEnabled && !needsDayCleanup(state)) {
+  if (!deviceMayControlPowerwall(state, { carSyncEnabled })) {
     return;
   }
 
@@ -1392,15 +1443,45 @@ async function processUser(store, deviceId) {
   await store.set('state_' + deviceId, JSON.stringify(state));
 }
 
+// Append a throttled red warning to each conflicted device's activity log when ≥2 ACTIVE records
+// are driving the same Powerwall. Throttled per device (6h) so it is a tripwire, not spam.
+async function warnSiteConflicts(store, summaries, conflicts, nowMs) {
+  const DUP_WARN_MS = 6 * 60 * 60 * 1000;
+  const flagged = new Set();
+  for (const c of conflicts) for (const id of c.deviceIds) flagged.add(id);
+  for (const s of summaries) {
+    if (!flagged.has(s.id)) continue;
+    if (s.st.lastDupWarn && (nowMs - s.st.lastDupWarn) < DUP_WARN_MS) continue;
+    s.st.log = s.st.log || [];
+    const when = new Date().toLocaleString('en-GB', { timeZone: 'Europe/London', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    s.st.log.unshift('[' + when + '] ⚠️ Multiple app installs are controlling this Powerwall — open Settings › Connected devices and remove any you do not recognise');
+    s.st.log = s.st.log.slice(0, 50);
+    s.st.lastDupWarn = nowMs;
+    try { await store.set('state_' + s.id, JSON.stringify(s.st)); } catch(_) {}
+  }
+}
+
 exports.handler = async () => {
   const { getStore } = require('@netlify/blobs');
   const store = getStore({ name: 'arb', siteID: process.env.SITE_ID, token: process.env.NETLIFY_API_TOKEN });
   try {
     const result = await store.list({ prefix: 'device_' });
     const blobs = result.blobs || [];
-    await Promise.all(blobs.map(blob =>
-      processUser(store, blob.key.replace('device_', '')).catch(() => {})
-    ));
+    const nowMs = Date.now();
+    // Load a lightweight summary per device: state (for the staleness guard) and token (energy site
+    // id, for the duplicate-site tripwire). These are Netlify blob reads only — no billed Tesla calls.
+    const summaries = await Promise.all(blobs.map(async blob => {
+      const id = blob.key.replace('device_', '');
+      const st = JSON.parse(await store.get('state_' + id) || '{}');
+      const tok = JSON.parse(await store.get('token_' + id) || 'null');
+      return { id, st, active: isDeviceActive(st, nowMs), energySiteId: (tok && tok.energySiteId) || null };
+    }));
+    // Tripwire: two live records on one Powerwall is the orphaned-device symptom — make it loud.
+    const conflicts = detectDuplicateSites(summaries.filter(s => s.active).map(s => ({ deviceId: s.id, energySiteId: s.energySiteId })));
+    if (conflicts.length) { try { await warnSiteConflicts(store, summaries, conflicts, nowMs); } catch(_) {} }
+    // Only process ACTIVE records — orphaned ones are skipped, so they stop driving the Powerwall
+    // and stop making their billed Tesla live_status calls.
+    await Promise.all(summaries.map(s => s.active ? processUser(store, s.id).catch(() => {}) : null));
   } catch (e) {}
   return { statusCode: 200, body: 'OK' };
 };
@@ -1416,6 +1497,10 @@ if (process.env.TEST_MODE === '1') {
     computeReserveFloorPct,
     shouldFetchLive,
     needsDayCleanup,
+    isDeviceActive,
+    detectDuplicateSites,
+    deviceMayControlPowerwall,
+    DEVICE_STALE_MS,
     EXPORT_KWH_PER_SLOT,
 
     // Night cycle window trigger logic
