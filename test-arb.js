@@ -44,7 +44,8 @@ async function runAll() {
 // ── Load arb-tick.js test exports ─────────────────────────────────────────────
 process.env.TEST_MODE = '1';
 const { findBestConsecutiveWindow, planSellSlots, isNightWindowActive, isPhase3PastEnd, dayChargeStopMode, dayShouldCharge,
-        deriveDayStopTime, computeReserveFloorPct, shouldFetchLive, needsDayCleanup, EXPORT_KWH_PER_SLOT }
+        deriveDayStopTime, computeReserveFloorPct, shouldFetchLive, needsDayCleanup, EXPORT_KWH_PER_SLOT,
+        isDeviceActive, detectDuplicateSites, deviceMayControlPowerwall, DEVICE_STALE_MS }
   = require('./netlify/functions/arb-tick')._test;
 
 // ── Mock @netlify/blobs for arb-api.js ────────────────────────────────────────
@@ -55,7 +56,10 @@ const mockStore = {
   get:    async k      => mockStoreData[k] || null,
   set:    async (k, v) => { mockStoreData[k] = v; },
   delete: async k      => { delete mockStoreData[k]; },
-  list:   async ()     => ({ blobs: [] })
+  list:   async (opts) => {
+    const prefix = (opts && opts.prefix) || '';
+    return { blobs: Object.keys(mockStoreData).filter(k => k.startsWith(prefix)).map(key => ({ key })) };
+  }
 };
 const origResolve = Module._resolveFilename;
 Module._resolveFilename = function(req, ...args) {
@@ -909,6 +913,123 @@ test('Night cycle active → defer Day cleanup to a phase-0 tick', () => {
   const state = { enabled: true, phase: 2, dayEnabled: false, holidayEnabled: false,
     dayExporting: true, dayCharging: false };
   assert(needsDayCleanup(state) === false, 'cleanup only runs once the Night cycle is at phase 0');
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+console.log('\n── 9. Orphaned/duplicate device guards ────────────────────────────────────');
+
+// isDeviceActive — staleness guard that retires orphaned records
+test('recently-seen device → active', () => {
+  const now = 1_000_000_000_000;
+  assert(isDeviceActive({ lastClientSeen: now - 60_000, phase: 0 }, now) === true, 'seen a minute ago is active');
+});
+test('device silent for > 14 days → orphan (inactive)', () => {
+  const now = 1_000_000_000_000;
+  assert(isDeviceActive({ lastClientSeen: now - DEVICE_STALE_MS - 1, phase: 0 }, now) === false, 'two weeks silent is stale');
+});
+test('stale but mid-cycle (phase > 0) → never culled', () => {
+  const now = 1_000_000_000_000;
+  assert(isDeviceActive({ lastClientSeen: now - DEVICE_STALE_MS - 1, phase: 2 }, now) === true, 'never cull a device mid-cycle');
+});
+test('no lastClientSeen stamp → active (migration grace)', () => {
+  const now = 1_000_000_000_000;
+  assert(isDeviceActive({ phase: 0 }, now) === true, 'records predating the field must not be culled');
+});
+
+// detectDuplicateSites — two installs driving one Powerwall
+test('two devices on one energy site → conflict flagged', () => {
+  const conflicts = detectDuplicateSites([
+    { deviceId: 'a', energySiteId: 'site1' },
+    { deviceId: 'b', energySiteId: 'site1' },
+    { deviceId: 'c', energySiteId: 'site2' }
+  ]);
+  assertEqual(conflicts.length, 1);
+  assertEqual(conflicts[0].energySiteId, 'site1');
+  assert(conflicts[0].deviceIds.includes('a') && conflicts[0].deviceIds.includes('b'), 'both conflicting ids reported');
+});
+test('distinct energy sites → no conflict', () => {
+  assertEqual(detectDuplicateSites([
+    { deviceId: 'a', energySiteId: 'site1' },
+    { deviceId: 'b', energySiteId: 'site2' }
+  ]).length, 0);
+});
+test('devices with no energySiteId are ignored', () => {
+  assertEqual(detectDuplicateSites([
+    { deviceId: 'a', energySiteId: null },
+    { deviceId: 'b', energySiteId: null }
+  ]).length, 0);
+});
+
+// deviceMayControlPowerwall — the "all-off ⇒ no control" invariant
+test('all modes off → device may NOT control the Powerwall', () => {
+  const state = { enabled: false, phase: 0, dayEnabled: false, holidayEnabled: false, dayExporting: false, dayCharging: false };
+  assert(deviceMayControlPowerwall(state, { carSyncEnabled: false }) === false, 'an idle/orphaned record must stay hands-off');
+});
+test('each active role → device MAY control', () => {
+  assert(deviceMayControlPowerwall({ enabled: true,  phase: 0, dayEnabled: false, holidayEnabled: false }, {}) === true, 'night armed');
+  assert(deviceMayControlPowerwall({ enabled: false, phase: 2, dayEnabled: false, holidayEnabled: false }, {}) === true, 'active cycle');
+  assert(deviceMayControlPowerwall({ enabled: false, phase: 0, dayEnabled: true,  holidayEnabled: false }, {}) === true, 'day mode');
+  assert(deviceMayControlPowerwall({ enabled: false, phase: 0, dayEnabled: false, holidayEnabled: true  }, {}) === true, 'holiday mode');
+  assert(deviceMayControlPowerwall({ enabled: false, phase: 0, dayEnabled: false, holidayEnabled: false }, { carSyncEnabled: true }) === true, 'car sync');
+  assert(deviceMayControlPowerwall({ enabled: false, phase: 0, dayEnabled: false, holidayEnabled: false, dayExporting: true }, {}) === true, 'pending Day cleanup');
+});
+
+// keysForDevice — delete matcher must be exact, never bleed into another device's blobs
+test('keysForDevice matches all per-device keys and nothing else', () => {
+  const keys = [
+    'device_dev_aaa', 'state_dev_aaa', 'token_dev_aaa', 'day_settings_dev_aaa', 'soe_history_dev_aaa',
+    'device_dev_bbb', 'state_dev_bbb', 'token_dev_bbb'
+  ];
+  const matched = arbApi.keysForDevice(keys, 'dev_aaa');
+  assertEqual(matched.length, 5);
+  assert(matched.every(k => k.endsWith('_dev_aaa')), 'only dev_aaa keys');
+  assert(!matched.includes('state_dev_bbb'), 'never touches another device');
+});
+test('keysForDevice does not match an id that is a bare substring', () => {
+  const keys = ['state_dev_aaa', 'state_xdev_aaa'];
+  const matched = arbApi.keysForDevice(keys, 'dev_aaa');
+  assertEqual(matched.length, 1);
+  assertEqual(matched[0], 'state_dev_aaa');
+});
+
+// delete_device — evicts an orphan, protects the current device
+test('delete_device removes only the orphan, leaves current intact', async () => {
+  resetStore({
+    'device_cur': 'tok', 'state_cur': '{}', 'token_cur': 'tok', 'day_settings_cur': '{}',
+    'device_orphan': 'tok', 'state_orphan': '{}', 'token_orphan': 'tok', 'soe_history_orphan': '[]'
+  });
+  const resp = await apiPost({ action: 'delete_device', device_id: 'cur', target_device_id: 'orphan' });
+  assertEqual(resp.statusCode, 200);
+  assert(mockStoreData['device_cur'] !== undefined, 'current device kept');
+  assert(mockStoreData['state_cur'] !== undefined, 'current state kept');
+  assert(mockStoreData['device_orphan'] === undefined, 'orphan device blob removed');
+  assert(mockStoreData['state_orphan'] === undefined, 'orphan state removed');
+  assert(mockStoreData['soe_history_orphan'] === undefined, 'orphan history removed');
+});
+test('delete_device refuses to delete the current device', async () => {
+  resetStore({ 'device_cur': 'tok', 'state_cur': '{}' });
+  const resp = await apiPost({ action: 'delete_device', device_id: 'cur', target_device_id: 'cur' });
+  assertEqual(resp.statusCode, 400);
+  assert(mockStoreData['device_cur'] !== undefined, 'current device not deleted');
+});
+
+// type=devices — surfaces every record so the orphan is visible
+test('GET type=devices lists all records and flags the current one', async () => {
+  resetStore({
+    'device_cur':    'x', 'token_cur':    JSON.stringify({ access: 'a', energySiteId: 'site1' }),
+    'state_cur':     JSON.stringify({ enabled: true, dayEnabled: false, log: ['[x] night ok'] }),
+    'device_orphan': 'x', 'token_orphan': JSON.stringify({ access: 'a', energySiteId: 'site1' }),
+    'state_orphan':  JSON.stringify({ enabled: false, dayEnabled: true, log: ['[x] Day: export on'] }),
+    'day_settings_orphan': JSON.stringify({ sellEnabled: true })
+  });
+  const resp = await apiGet({ type: 'devices', device_id: 'cur' });
+  const data = JSON.parse(resp.body);
+  assertEqual(data.devices.length, 2);
+  const cur = data.devices.find(d => d.deviceId === 'cur');
+  const orphan = data.devices.find(d => d.deviceId === 'orphan');
+  assert(cur.isCurrent === true, 'current flagged');
+  assert(orphan.isCurrent === false, 'orphan not flagged current');
+  assert(orphan.dayEnabled === true && orphan.sellEnabled === true, 'orphan Day+Sell surfaced');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
