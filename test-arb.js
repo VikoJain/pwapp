@@ -45,7 +45,8 @@ async function runAll() {
 process.env.TEST_MODE = '1';
 const { findBestConsecutiveWindow, planSellSlots, isNightWindowActive, isPhase3PastEnd, dayChargeStopMode, dayShouldCharge,
         deriveDayStopTime, computeReserveFloorPct, shouldFetchLive, needsDayCleanup, EXPORT_KWH_PER_SLOT,
-        isDeviceActive, detectDuplicateSites, deviceMayControlPowerwall, DEVICE_STALE_MS }
+        isDeviceActive, detectDuplicateSites, deviceMayControlPowerwall, DEVICE_STALE_MS,
+        carResumeLimit, shouldCaptureCarLimit }
   = require('./netlify/functions/arb-tick')._test;
 
 // ── Mock @netlify/blobs for arb-api.js ────────────────────────────────────────
@@ -1030,6 +1031,43 @@ test('GET type=devices lists all records and flags the current one', async () =>
   assert(cur.isCurrent === true, 'current flagged');
   assert(orphan.isCurrent === false, 'orphan not flagged current');
   assert(orphan.dayEnabled === true && orphan.sellEnabled === true, 'orphan Day+Sell surfaced');
+});
+
+console.log('\n── 10. Night-mode car charge-limit capture & restore [18 Oct] ─────────────');
+
+// carResumeLimit: Phase 3 should restore the car's OWN captured target, not the app's 80%.
+test('carResumeLimit — uses the car\'s captured target (100%) over the app limit', () => {
+  assertEqual(carResumeLimit(100, 80), 100);
+});
+test('carResumeLimit — falls back to the app limit when nothing captured', () => {
+  assertEqual(carResumeLimit(null, 80), 80);
+});
+test('carResumeLimit — falls back to 80 when neither is set', () => {
+  assertEqual(carResumeLimit(null, undefined), 80);
+});
+test('carResumeLimit — ignores a zero/invalid captured value', () => {
+  assertEqual(carResumeLimit(0, 90), 90);
+});
+test('carResumeLimit — honours a captured target below the app default', () => {
+  assertEqual(carResumeLimit(60, 80), 60);
+});
+
+// shouldCaptureCarLimit: only capture a real target ABOVE the park value (never a leftover 50%).
+test('shouldCaptureCarLimit — captures a genuine 100% target above the 50% park', () => {
+  assert(shouldCaptureCarLimit(100, 50) === true, '100 > 50 should capture');
+});
+test('shouldCaptureCarLimit — does NOT re-capture a leftover park value (50 == 50)', () => {
+  assert(shouldCaptureCarLimit(50, 50) === false, '50 is the park value, must not capture');
+});
+test('shouldCaptureCarLimit — does NOT capture below the park value', () => {
+  assert(shouldCaptureCarLimit(40, 50) === false, '40 < 50 must not capture');
+});
+test('shouldCaptureCarLimit — does NOT capture a missing/null reading', () => {
+  assert(shouldCaptureCarLimit(null, 50) === false, 'null must not capture');
+});
+test('shouldCaptureCarLimit — custom park value (80) captures 90 but not 80', () => {
+  assert(shouldCaptureCarLimit(90, 80) === true, '90 > 80 should capture');
+  assert(shouldCaptureCarLimit(80, 80) === false, '80 == park must not capture');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
