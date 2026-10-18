@@ -46,7 +46,7 @@ process.env.TEST_MODE = '1';
 const { findBestConsecutiveWindow, planSellSlots, isNightWindowActive, isPhase3PastEnd, dayChargeStopMode, dayShouldCharge,
         deriveDayStopTime, computeReserveFloorPct, shouldFetchLive, needsDayCleanup, EXPORT_KWH_PER_SLOT,
         isDeviceActive, detectDuplicateSites, deviceMayControlPowerwall, DEVICE_STALE_MS,
-        carResumeLimit, shouldCaptureCarLimit }
+        carResumeLimit, shouldCaptureCarLimit, shouldSkipExportForLowCar }
   = require('./netlify/functions/arb-tick')._test;
 
 // ── Mock @netlify/blobs for arb-api.js ────────────────────────────────────────
@@ -1068,6 +1068,27 @@ test('shouldCaptureCarLimit — does NOT capture a missing/null reading', () => 
 test('shouldCaptureCarLimit — custom park value (80) captures 90 but not 80', () => {
   assert(shouldCaptureCarLimit(90, 80) === true, '90 > 80 should capture');
   assert(shouldCaptureCarLimit(80, 80) === false, '80 == park must not capture');
+});
+
+console.log('\n── 11. Low-car-battery → prioritise car (skip overnight export) [19 Oct] ───');
+
+test('shouldSkipExportForLowCar — car at 10% below 30% threshold → skip export', () => {
+  assert(shouldSkipExportForLowCar(10, 30) === true, '10 < 30 should skip');
+});
+test('shouldSkipExportForLowCar — car at 45% above 30% threshold → export as normal', () => {
+  assert(shouldSkipExportForLowCar(45, 30) === false, '45 >= 30 should not skip');
+});
+test('shouldSkipExportForLowCar — exactly at the threshold does NOT skip (strictly below)', () => {
+  assert(shouldSkipExportForLowCar(30, 30) === false, '30 is not < 30');
+});
+test('shouldSkipExportForLowCar — threshold 0 disables the feature entirely', () => {
+  assert(shouldSkipExportForLowCar(5, 0) === false, '0 threshold = off');
+});
+test('shouldSkipExportForLowCar — unknown SOC (null, e.g. car asleep) → never skip', () => {
+  assert(shouldSkipExportForLowCar(null, 30) === false, 'null SOC must not skip');
+});
+test('shouldSkipExportForLowCar — custom 40% threshold catches a 35% car', () => {
+  assert(shouldSkipExportForLowCar(35, 40) === true, '35 < 40 should skip');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
