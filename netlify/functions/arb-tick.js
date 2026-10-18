@@ -2,7 +2,7 @@ const https = require('https');
 const crypto = require('crypto');
 
 const DEFAULT_STATE = { phase: 0, enabled: false, log: [], stats: { kwh: 0, rate: 0, earned: 0 } };
-const DEFAULT_SETTINGS = { chargeTargetPct: 50, startHour: 23, startMinute: 30, endHour: 5, endMinute: 30 };
+const DEFAULT_SETTINGS = { chargeTargetPct: 50, startHour: 23, startMinute: 30, endHour: 5, endMinute: 30, carLowSocThreshold: 30 };
 
 function makeRequest(options, postData) {
   return new Promise((resolve, reject) => {
@@ -215,7 +215,11 @@ async function getVehicleChargeState(token, apiBase, vehicleId) {
   // from the SAME vehicle_data response — no extra API call to learn the limit.
   const d = await teslaGet(token, apiBase, `/api/1/vehicles/${vehicleId}/vehicle_data?endpoints=charge_state`);
   const cs = d.response?.charge_state || {};
-  return { state: cs.charging_state || 'Unknown', limit: typeof cs.charge_limit_soc === 'number' ? cs.charge_limit_soc : null };
+  return {
+    state: cs.charging_state || 'Unknown',
+    limit: typeof cs.charge_limit_soc === 'number' ? cs.charge_limit_soc : null,
+    soc: typeof cs.battery_level === 'number' ? cs.battery_level : null
+  };
 }
 async function vehicleChargeStop(token, apiBase, vehicleId) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/command/charge_stop`, {}); }
 async function vehicleSetChargeLimit(token, apiBase, vehicleId, percent) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/command/set_charge_limit`, { percent }); }
@@ -230,6 +234,11 @@ function carResumeLimit(carOriginalLimit, carChargeLimit) {
 // us re-capturing a leftover 50% park limit from a cycle that never reached the Phase 3 resume.
 function shouldCaptureCarLimit(currentLimit, parkLimit) {
   return typeof currentLimit === 'number' && currentLimit > (parkLimit || 50);
+}
+// When the car is below the user's "prioritise car" threshold, skip the overnight export this cycle
+// and let the car charge to its own target at the cheap off-peak rate (full Car-first). threshold 0 = off.
+function shouldSkipExportForLowCar(carSoc, threshold) {
+  return typeof carSoc === 'number' && (threshold || 0) > 0 && carSoc < threshold;
 }
 
 function fmt2(n) { return String(n).padStart(2, '0'); }
@@ -1248,6 +1257,7 @@ async function processUser(store, deviceId) {
       state.phase1CarStopSent = false;
       state.phase1CarCheckTime = null;
       state.carOriginalLimit = null;
+      state.carLowSkipExport = false;
       log(state, '=== Arbitrage cycle started ===');
       await setExport(access, apiBase, siteId, false);
       await setMode(access, apiBase, siteId, 'autonomous', chargeTargetPct);
@@ -1270,6 +1280,13 @@ async function processUser(store, deviceId) {
         const minsRemaining = endTotalMins >= nowTotalMins ? endTotalMins - nowTotalMins : (24 * 60 - nowTotalMins + endTotalMins);
         const exportMins = Math.ceil((pct / 100 * 13.5) / 5.0 * 60);
         const minExportWindow = 30;
+        // Read the car ONCE here — used both for the low-SOC "prioritise car" check and to capture
+        // the car's own charge limit (so the Phase 2 park handler needs no second read).
+        let carInfo = null;
+        if (s.carControlEnabled && tokenData.vehicleId) {
+          try { carInfo = await getVehicleChargeState(access, apiBase, tokenData.vehicleId); } catch(e) {}
+        }
+        const carLow = carInfo && shouldSkipExportForLowCar(carInfo.soc, s.carLowSocThreshold);
         if (minsRemaining < exportMins + minExportWindow) {
           log(state, 'Export skipped — only ' + minsRemaining + ' min until ' + fmt2(endHour) + ':' + fmt2(endMinute) + ', need ~' + (exportMins + minExportWindow) + ' min — recharging instead');
           state.phase = 3;
@@ -1277,6 +1294,17 @@ async function processUser(store, deviceId) {
           await setMode(access, apiBase, siteId, 'autonomous', 100);
           log(state, 'Phase 3: Recharging from grid');
           await sendPush(store, deviceId, 'Overnight export skipped', 'Not enough time before ' + fmt2(endHour) + ':' + fmt2(endMinute) + ' — recharging instead');
+        } else if (carLow) {
+          // Car is below the user's "prioritise car" threshold — skip the overnight export this cycle
+          // and let the car charge to its own target at the cheap rate. Recharge the battery to 100%
+          // alongside (reserve 100%); do NOT park/stop the car.
+          state.phase = 3;
+          state.stats.phase3StartPct = pct;
+          state.carLowSkipExport = true;
+          await setExport(access, apiBase, siteId, false);
+          await setMode(access, apiBase, siteId, 'autonomous', 100);
+          log(state, 'Car at ' + carInfo.soc + '% is below your ' + s.carLowSocThreshold + '% threshold — skipping overnight export so the car charges cheaply; recharging battery to 100%');
+          await sendPush(store, deviceId, 'Charging the car first', 'Car at ' + carInfo.soc + '% — export skipped so it charges at the cheap rate');
         } else {
           state.phase = 2;
           const rate = await getOctopusRate(store, deviceId);
@@ -1295,6 +1323,10 @@ async function processUser(store, deviceId) {
           log(state, 'Phase 2: Export enabled' + (rate > 0 ? ' at ' + rate.toFixed(1) + 'p/kWh' : ' (rate unavailable — will retry)'));
           await sendPush(store, deviceId, 'Battery charged — exporting now', 'Battery at ' + pct + '%, exporting to grid' + (rate > 0 ? ' at ' + rate.toFixed(1) + 'p/kWh' : ''));
           const carSyncCarFirst = carSyncEnabled && carSyncSettings.priority === 'car';
+          // Capture the car's own target now (from the read above) so Phase 3 restores it, not 80%.
+          if (carInfo && !carSyncCarFirst && shouldCaptureCarLimit(carInfo.limit, s.carChargeLimitPhase2 || 50)) {
+            state.carOriginalLimit = carInfo.limit;
+          }
           if (s.carControlEnabled && tokenData.vehicleId && !carSyncCarFirst) {
             try {
               await wakeVehicle(access, apiBase, tokenData.vehicleId);
@@ -1521,6 +1553,7 @@ if (process.env.TEST_MODE === '1') {
     deviceMayControlPowerwall,
     carResumeLimit,
     shouldCaptureCarLimit,
+    shouldSkipExportForLowCar,
     DEVICE_STALE_MS,
     EXPORT_KWH_PER_SLOT,
 
