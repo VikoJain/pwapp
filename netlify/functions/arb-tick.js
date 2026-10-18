@@ -211,12 +211,26 @@ async function fetchImportEndpointRate(settings, endpoint) {
 async function wakeVehicle(token, apiBase, vehicleId) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/wake_up`, {}); }
 async function getVehicleState(token, apiBase, vehicleId) { const d = await teslaGet(token, apiBase, `/api/1/vehicles/${vehicleId}`); return d.response?.state || 'unknown'; }
 async function getVehicleChargeState(token, apiBase, vehicleId) {
+  // Returns both the charging state AND the car's own charge-limit target (charge_limit_soc),
+  // from the SAME vehicle_data response — no extra API call to learn the limit.
   const d = await teslaGet(token, apiBase, `/api/1/vehicles/${vehicleId}/vehicle_data?endpoints=charge_state`);
-  return d.response?.charge_state?.charging_state || 'Unknown';
+  const cs = d.response?.charge_state || {};
+  return { state: cs.charging_state || 'Unknown', limit: typeof cs.charge_limit_soc === 'number' ? cs.charge_limit_soc : null };
 }
 async function vehicleChargeStop(token, apiBase, vehicleId) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/command/charge_stop`, {}); }
 async function vehicleSetChargeLimit(token, apiBase, vehicleId, percent) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/command/set_charge_limit`, { percent }); }
 async function vehicleChargeStart(token, apiBase, vehicleId) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/command/charge_start`, {}); }
+
+// Car charge-limit resume target for Phase 3: prefer the car's OWN captured target (what the user
+// set in the Tesla app, e.g. 100%), falling back to the app's configured limit, then 80%.
+function carResumeLimit(carOriginalLimit, carChargeLimit) {
+  return (typeof carOriginalLimit === 'number' && carOriginalLimit > 0) ? carOriginalLimit : (carChargeLimit || 80);
+}
+// Only capture the car's own limit if it's a real target ABOVE the Phase-2 park value — this stops
+// us re-capturing a leftover 50% park limit from a cycle that never reached the Phase 3 resume.
+function shouldCaptureCarLimit(currentLimit, parkLimit) {
+  return typeof currentLimit === 'number' && currentLimit > (parkLimit || 50);
+}
 
 function fmt2(n) { return String(n).padStart(2, '0'); }
 
@@ -943,7 +957,7 @@ async function runCarSync(state, store, tokenData, settings, deviceId, phase1Res
           const vState = await getVehicleState(access, apiBase, tokenData.vehicleId);
           if (vState === 'online') {
             const cs = await getVehicleChargeState(access, apiBase, tokenData.vehicleId);
-            if (cs === 'Charging' && !state.midPhase2CarStopSent) {
+            if (cs.state === 'Charging' && !state.midPhase2CarStopSent) {
               await wakeVehicle(access, apiBase, tokenData.vehicleId);
               const limit = arbSettings.carChargeLimitPhase2 || 50;
               await store.set('pending_vehicle_cmd_' + deviceId, JSON.stringify({ cmd: 'charge_stop', chargeLimit: limit, requestedAt: Date.now() }));
@@ -979,7 +993,7 @@ async function runCarSync(state, store, tokenData, settings, deviceId, phase1Res
     const vState = await getVehicleState(access, apiBase, tokenData.vehicleId);
     if (vState === 'online') {
       const chargeState = await getVehicleChargeState(access, apiBase, tokenData.vehicleId);
-      vehicleCharging = chargeState === 'Charging';
+      vehicleCharging = chargeState.state === 'Charging';
     }
   } catch(e) { return; }
 
@@ -1172,6 +1186,16 @@ async function processUser(store, deviceId) {
         const vState = await getVehicleState(access, apiBase, vehicleId);
         if (vState === 'online') {
           if (pendingCmd.cmd === 'charge_stop') {
+            // Capture the car's OWN charge target before we park it, so Phase 3 restores it (not 80%).
+            if (state.carOriginalLimit == null) {
+              try {
+                const info = await getVehicleChargeState(access, apiBase, vehicleId);
+                if (shouldCaptureCarLimit(info.limit, pendingCmd.chargeLimit || 50)) {
+                  state.carOriginalLimit = info.limit;
+                  log(state, 'Vehicle: remembered your charge target of ' + info.limit + '% — will restore it in Phase 3');
+                }
+              } catch(e) {}
+            }
             await vehicleSetChargeLimit(access, apiBase, vehicleId, pendingCmd.chargeLimit || 50);
             await vehicleChargeStop(access, apiBase, vehicleId);
             log(state, 'Vehicle: charge limit set to ' + (pendingCmd.chargeLimit || 50) + '%, charging stopped for Phase 2 export');
@@ -1223,6 +1247,7 @@ async function processUser(store, deviceId) {
       state.stats = { kwh: 0, rate: 0, earned: 0, phase2StartPct: 0, phase1StartPct: pct, offPeakRate: null, importCost: 0, profit: 0 };
       state.phase1CarStopSent = false;
       state.phase1CarCheckTime = null;
+      state.carOriginalLimit = null;
       log(state, '=== Arbitrage cycle started ===');
       await setExport(access, apiBase, siteId, false);
       await setMode(access, apiBase, siteId, 'autonomous', chargeTargetPct);
@@ -1234,27 +1259,10 @@ async function processUser(store, deviceId) {
       // Re-apply export-off and autonomous mode every tick to prevent Tesla reverting
       try { await setExport(access, apiBase, siteId, false); await setMode(access, apiBase, siteId, 'autonomous', chargeTargetPct); } catch(e) {}
       if (m % 30 < 3) log(state, 'Phase 1 charging — battery at ' + pct + '%');
-      // Stop car charging during Phase 1 if car control is enabled — prevents car competing for grid import
-      if (s.carControlEnabled && tokenData.vehicleId && !state.phase1CarStopSent) {
-        const now1 = Date.now();
-        if (!state.phase1CarCheckTime || (now1 - state.phase1CarCheckTime) > 2 * 60 * 1000) {
-          state.phase1CarCheckTime = now1;
-          try {
-            const vState = await getVehicleState(access, apiBase, tokenData.vehicleId);
-            if (vState === 'online') {
-              const cs = await getVehicleChargeState(access, apiBase, tokenData.vehicleId);
-              if (cs === 'Charging') {
-                await wakeVehicle(access, apiBase, tokenData.vehicleId);
-                const limit = s.carChargeLimitPhase2 || 50;
-                await store.set('pending_vehicle_cmd_' + deviceId, JSON.stringify({ cmd: 'charge_stop', chargeLimit: limit, requestedAt: Date.now() }));
-                state.phase1CarStopSent = true;
-                log(state, 'Phase 1: car detected charging — sending charge stop to protect grid import');
-                await sendPush(store, deviceId, 'Car charging paused', 'Stopped car charging during battery charge phase');
-              }
-            }
-          } catch(e) {}
-        }
-      }
+      // Car is allowed to keep charging through Phase 1 (house-battery charge). Both draw cheap
+      // off-peak, so pausing the car here only shrinks its charge window. The car is paused only for
+      // the Phase 2 export (see the Phase 1→2 transition below) and resumed in Phase 3. This also
+      // avoids spending vehicle API calls every tick through Phase 1.
       if (pct >= chargeTargetPct) {
         log(state, 'Phase 1 complete — battery reached ' + pct + '%');
         const endTotalMins = endHour * 60 + endMinute;
@@ -1333,9 +1341,20 @@ async function processUser(store, deviceId) {
           log(state, 'Phase 2: not enough time (battery ' + pct + '%, ' + minsLeft + ' min left, need ' + (exportMinsNeeded + 60) + ') — skipping to Phase 3');
           state.phase = 3;
           state.stats.phase3StartPct = pct;
+          state.midPhase2CarStopSent = false;
+          state.midPhase2CarCheckTime = null;
           await setExport(access, apiBase, siteId, false);
           await setMode(access, apiBase, siteId, 'autonomous', 100);
           await sendPush(store, deviceId, 'Export shortened — recharging', 'Not enough time to fully export · Recharging now');
+          // Resume the car to its own target — it was parked at the Phase 2 stop; don't strand it at 50%.
+          if (s.carControlEnabled && tokenData.vehicleId) {
+            try {
+              await wakeVehicle(access, apiBase, tokenData.vehicleId);
+              const limit = carResumeLimit(state.carOriginalLimit, s.carChargeLimit);
+              await store.set('pending_vehicle_cmd_' + deviceId, JSON.stringify({ cmd: 'charge_resume', chargeLimit: limit, requestedAt: Date.now() }));
+              log(state, 'Vehicle: wake-up sent — charging will resume to ' + limit + '%' + (state.carOriginalLimit ? ' (your car\'s own target)' : '') + ' shortly');
+            } catch (e) { log(state, 'Vehicle wake error: ' + e.message); }
+          }
         }
       }
       if (pct <= 2) {
@@ -1358,9 +1377,9 @@ async function processUser(store, deviceId) {
         if (s.carControlEnabled && tokenData.vehicleId) {
           try {
             await wakeVehicle(access, apiBase, tokenData.vehicleId);
-            const limit = s.carChargeLimit || 80;
+            const limit = carResumeLimit(state.carOriginalLimit, s.carChargeLimit);
             await store.set('pending_vehicle_cmd_' + deviceId, JSON.stringify({ cmd: 'charge_resume', chargeLimit: limit, requestedAt: Date.now() }));
-            log(state, 'Vehicle: wake-up sent — charging will resume to ' + limit + '% shortly');
+            log(state, 'Vehicle: wake-up sent — charging will resume to ' + limit + '%' + (state.carOriginalLimit ? ' (your car\'s own target)' : '') + ' shortly');
           } catch (e) { log(state, 'Vehicle wake error: ' + e.message); }
         }
       }
@@ -1500,6 +1519,8 @@ if (process.env.TEST_MODE === '1') {
     isDeviceActive,
     detectDuplicateSites,
     deviceMayControlPowerwall,
+    carResumeLimit,
+    shouldCaptureCarLimit,
     DEVICE_STALE_MS,
     EXPORT_KWH_PER_SLOT,
 
