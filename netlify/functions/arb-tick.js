@@ -225,6 +225,19 @@ async function vehicleChargeStop(token, apiBase, vehicleId) { return teslaPost(t
 async function vehicleSetChargeLimit(token, apiBase, vehicleId, percent) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/command/set_charge_limit`, { percent }); }
 async function vehicleChargeStart(token, apiBase, vehicleId) { return teslaPost(token, apiBase, `/api/1/vehicles/${vehicleId}/command/charge_start`, {}); }
 
+// Sum the estimated export revenue (£) across a combined slot list (each slot {type, rate, estKwh}).
+// Counts ALL slots, past and future — so the daily estimate does NOT collapse as slots execute.
+// Summing only the future-replanned sell window would drop each sell slot's revenue the moment it
+// ran, leaving arb-only revenue against the full charge cost → a phantom "net loss" by evening.
+// Sell slots use their per-slot estKwh; arb slots assume a full export slot (they force-charge first).
+function estimateDayRevenue(slots, efficiency, exportKwhPerSlot) {
+  return (slots || []).reduce((sum, s) => {
+    if (s.type === 'sell') return sum + s.rate * efficiency * (s.estKwh || 0);
+    if (s.type === 'arb')  return sum + s.rate * efficiency * exportKwhPerSlot;
+    return sum;
+  }, 0) / 100;
+}
+
 // Car charge-limit resume target for Phase 3: prefer the car's OWN captured target (what the user
 // set in the Tesla app, e.g. 100%), falling back to the app's configured limit, then 80%.
 function carResumeLimit(carOriginalLimit, carChargeLimit) {
@@ -782,10 +795,9 @@ async function runDayMode(state, store, tokenData, currentPctRaw, h, m, deviceId
       .map(s => s.time + ':' + s.estKwh).join(',');
     const changed = futureSellSig(state.dayExportSlots || []) !== futureSellSig(combinedRT);
     state.dayExportSlots = combinedRT;
-    // Refresh the revenue estimate (sell portion re-planned; arb portion unchanged).
-    const sellRevenueRT = sellWindowRT.reduce((sum, s) => sum + s.value * EFFICIENCY * (s.exportKwh || 0), 0) / 100;
-    const arbRevenueRT = combinedRT.filter(s => s.type === 'arb').reduce((sum, s) => sum + s.rate * EFFICIENCY * EXPORT_KWH_PER_SLOT, 0) / 100;
-    state.dayEstimatedRevenue = parseFloat((sellRevenueRT + arbRevenueRT).toFixed(2));
+    // Refresh the revenue estimate from the full combined slot list (past + future) so already-
+    // executed slots keep contributing — see estimateDayRevenue for why future-only would under-count.
+    state.dayEstimatedRevenue = parseFloat(estimateDayRevenue(combinedRT, EFFICIENCY, EXPORT_KWH_PER_SLOT).toFixed(2));
     state.dayEstimatedProfit = parseFloat((state.dayEstimatedRevenue - (state.dayEstimatedImportCost || 0)).toFixed(2));
     if (changed) {
       const list = newSellSlots.map(s => s.time + ' (~' + s.estKwh + 'kWh/' + s.estMins + 'm)').join(', ');
@@ -1187,12 +1199,19 @@ async function processUser(store, deviceId) {
   if (pendingCmd && tokenData.vehicleId) {
     const { access, apiBase } = tokenData;
     const vehicleId = tokenData.vehicleId;
-    if (Date.now() - pendingCmd.requestedAt > 5 * 60 * 1000) {
+    // A car waking from deep sleep can take several minutes and may need multiple nudges; a 5-min
+    // window only gave ~1-2 wake attempts and often abandoned the resume before the car was online,
+    // stranding it at the Phase-2 park limit. 15 min spans ~5 ticks of wake attempts.
+    if (Date.now() - pendingCmd.requestedAt > 15 * 60 * 1000) {
       log(state, 'Vehicle command timed out: ' + pendingCmd.cmd);
       await store.delete('pending_vehicle_cmd_' + deviceId);
     } else {
       try {
-        const vState = await getVehicleState(access, apiBase, vehicleId);
+        // wake_up both nudges the car AND returns its current online/asleep state, so we drive the
+        // readiness check off its response — no separate getVehicleState GET (keeps vehicle API
+        // calls flat despite the longer window; the car's own charge target is unaffected).
+        const wakeResp = await wakeVehicle(access, apiBase, vehicleId);
+        const vState = wakeResp?.response?.state || 'unknown';
         if (vState === 'online') {
           if (pendingCmd.cmd === 'charge_stop') {
             // Capture the car's OWN charge target before we park it, so Phase 3 restores it (not 80%).
@@ -1216,9 +1235,8 @@ async function processUser(store, deviceId) {
             await sendPush(store, deviceId, 'Car charging resumed', 'Charging to ' + pendingCmd.chargeLimit + '%');
           }
           await store.delete('pending_vehicle_cmd_' + deviceId);
-        } else {
-          await wakeVehicle(access, apiBase, vehicleId);
         }
+        // Still asleep/offline: the wake_up above has nudged it; we retry on the next tick until online.
       } catch (e) { log(state, 'Vehicle command error: ' + e.message); }
     }
     await store.set('state_' + deviceId, JSON.stringify(state));
@@ -1552,6 +1570,7 @@ if (process.env.TEST_MODE === '1') {
     detectDuplicateSites,
     deviceMayControlPowerwall,
     carResumeLimit,
+    estimateDayRevenue,
     shouldCaptureCarLimit,
     shouldSkipExportForLowCar,
     DEVICE_STALE_MS,
