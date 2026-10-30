@@ -46,7 +46,7 @@ process.env.TEST_MODE = '1';
 const { findBestConsecutiveWindow, planSellSlots, isNightWindowActive, isPhase3PastEnd, dayChargeStopMode, dayShouldCharge,
         deriveDayStopTime, computeReserveFloorPct, shouldFetchLive, needsDayCleanup, EXPORT_KWH_PER_SLOT,
         isDeviceActive, detectDuplicateSites, deviceMayControlPowerwall, DEVICE_STALE_MS,
-        carResumeLimit, shouldCaptureCarLimit, shouldSkipExportForLowCar }
+        carResumeLimit, shouldCaptureCarLimit, shouldSkipExportForLowCar, estimateDayRevenue }
   = require('./netlify/functions/arb-tick')._test;
 
 // ── Mock @netlify/blobs for arb-api.js ────────────────────────────────────────
@@ -1089,6 +1089,40 @@ test('shouldSkipExportForLowCar — unknown SOC (null, e.g. car asleep) → neve
 });
 test('shouldSkipExportForLowCar — custom 40% threshold catches a 35% car', () => {
   assert(shouldSkipExportForLowCar(35, 40) === true, '35 < 40 should skip');
+});
+
+// ── estimateDayRevenue — phantom-loss regression (intraday re-plan) ────────────
+// Bug: once a SELL slot had run, the re-plan summed revenue only over FUTURE sell slots, so the
+// executed sell revenue vanished while the full charge cost stayed — a fake "net loss" by evening.
+// The estimate must count ALL slots (past + future), not just the future-replanned ones.
+const EFF = 0.9, SLOT = EXPORT_KWH_PER_SLOT;
+test('estimateDayRevenue — counts an already-executed (past) sell slot', () => {
+  // One sell slot that has already run (16:30) + one arb slot (17:00). Both must count.
+  const slots = [
+    { type: 'sell', time: '16:30', rate: 32.9, estKwh: 4.71 },
+    { type: 'arb',  time: '17:00', rate: 33.0, estKwh: SLOT }
+  ];
+  const expected = (32.9 * EFF * 4.71 + 33.0 * EFF * SLOT) / 100;
+  assert(Math.abs(estimateDayRevenue(slots, EFF, SLOT) - expected) < 1e-9,
+    'past sell slot must still contribute revenue');
+});
+test('estimateDayRevenue — sell revenue does NOT collapse to arb-only', () => {
+  // The exact shape from the reported bug: dropping the sell slot would give arb-only (~£1.48).
+  const withSell = estimateDayRevenue([
+    { type: 'sell', rate: 32.9, estKwh: 4.71 },
+    { type: 'arb',  rate: 33.0, estKwh: SLOT }
+  ], EFF, SLOT);
+  const arbOnly = estimateDayRevenue([{ type: 'arb', rate: 33.0, estKwh: SLOT }], EFF, SLOT);
+  assert(withSell > arbOnly + 1.0, 'including the sell slot should add ~£1.39 over arb-only');
+});
+test('estimateDayRevenue — arb slot ignores estKwh and uses a full export slot', () => {
+  // Arb force-charges to 100% first, so it always assumes a full slot regardless of estKwh.
+  const r = estimateDayRevenue([{ type: 'arb', rate: 30.0, estKwh: 0 }], EFF, SLOT);
+  assert(Math.abs(r - (30.0 * EFF * SLOT) / 100) < 1e-9, 'arb uses exportKwhPerSlot, not estKwh');
+});
+test('estimateDayRevenue — empty / nullish slot list is £0', () => {
+  assertEqual(estimateDayRevenue([], EFF, SLOT), 0);
+  assertEqual(estimateDayRevenue(null, EFF, SLOT), 0);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
